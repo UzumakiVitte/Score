@@ -1,0 +1,35 @@
+SCOREMATE CLOUD DATABASE SETUP
+
+1. Create a Supabase project.
+2. Open SQL Editor in Supabase.
+3. Open schema.sql from this folder.
+4. Paste the entire contents into SQL Editor.
+5. Run it.
+6. Open Project Settings > API.
+7. Copy your Project URL.
+8. Copy your Publishable key, or anon key if your project shows that instead.
+9. Open config.js.
+10. Replace:
+    YOUR_SUPABASE_PROJECT_URL
+    YOUR_SUPABASE_PUBLISHABLE_OR_ANON_KEY
+11. Save the files.
+12. Upload the files to your GitHub Pages repository.
+
+IMPORTANT:
+Do NOT use a service_role key in config.js.
+
+This starter uses public RLS policies so the app can work without login.
+That means anyone who has access to the app can potentially read or modify the database.
+
+For a private personal app, the next version should add Supabase Authentication and user-specific RLS policies.
+
+
+PLAYER PICTURES
+
+The SQL now creates:
+- avatar_url on players
+- player-avatars Supabase Storage bucket
+- Storage policies for viewing/uploading/changing/removing pictures
+
+After running the updated schema.sql, players can have profile pictures.
+The app lets you select a picture from your iPhone when adding or editing a player.

@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#080a0f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>ScoreMate</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <button class="icon-btn" id="menuBtn">☰</button>
+    <div><div class="eyebrow">CARD SCOREKEEPER</div><h1 id="pageTitle">My Games</h1></div>
+    <button class="icon-btn" id="themeBtn">☀</button>
+  </header>
+
+  <main>
+    <section id="gamesView" class="view active">
+      <div class="cloud-status" id="cloudStatus">Connecting to cloud...</div>
+      <div class="search"><span>⌕</span><input id="gameSearch" placeholder="Search games"></div>
+      <div class="segmented"><button class="active" data-filter="active">In Progress</button><button data-filter="completed">Completed</button></div>
+      <div id="gamesList" class="list"></div>
+      <button class="primary big" id="newGameBtn">＋ New Game</button>
+    </section>
+
+    <section id="playersView" class="view">
+      <div class="search"><span>⌕</span><input id="playerSearch" placeholder="Search players"></div>
+      <div id="playersList" class="list"></div>
+      <button class="primary big" id="addPlayerBtn">＋ Add Player</button>
+    </section>
+
+    <section id="gameView" class="view">
+      <div class="game-head"><button class="back" id="backBtn">‹ Games</button><div class="game-title"><h2 id="gameName">Game</h2><span id="roundLabel">Round 1</span></div><button class="icon-btn" id="renameGameBtn">✎</button></div>
+      <div id="scoreCards" class="score-cards"></div>
+      <div class="quick-title">Quick score</div>
+      <div class="quick-grid" id="quickGrid"></div>
+      <div class="game-actions"><button class="secondary" id="undoBtn">↶ Undo</button><button class="secondary" id="historyBtn">History</button><button class="primary" id="nextRoundBtn">Next Round</button></div>
+    </section>
+
+    <section id="historyView" class="view"><div id="historyList" class="history-list"></div></section>
+
+    <section id="settingsView" class="view">
+      <div class="settings-card"><h2>Appearance</h2><p>Choose how ScoreMate looks.</p><div class="theme-choice"><button data-theme-choice="dark">🌙 Dark</button><button data-theme-choice="light">☀ Light</button></div></div>
+      <div class="settings-card"><h2>Cloud sync</h2><p id="accountStatus">Checking connection...</p><button class="secondary wide" id="syncBtn">Sync now</button></div>
+    </section>
+  </main>
+
+  <nav class="bottom-nav">
+    <button class="nav active" data-view="gamesView">▣<span>Games</span></button>
+    <button class="nav" data-view="playersView">♙<span>Players</span></button>
+    <button class="nav" data-view="historyView">◷<span>History</span></button>
+    <button class="nav" data-view="settingsView">⚙<span>Settings</span></button>
+  </nav>
+</div>
+
+<div class="modal hidden" id="modal"><div class="modal-box"><button class="close" id="closeModal">×</button><div id="modalContent"></div></div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

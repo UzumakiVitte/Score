@@ -1,35 +1,41 @@
-SCOREMATE CLOUD DATABASE SETUP
+SCOREMATE CLASSIC UPDATED VERSION
 
-1. Create a Supabase project.
-2. Open SQL Editor in Supabase.
-3. Open schema.sql from this folder.
-4. Paste the entire contents into SQL Editor.
-5. Run it.
-6. Open Project Settings > API.
-7. Copy your Project URL.
-8. Copy your Publishable key, or anon key if your project shows that instead.
-9. Open config.js.
-10. Replace:
-    YOUR_SUPABASE_PROJECT_URL
-    YOUR_SUPABASE_PUBLISHABLE_OR_ANON_KEY
-11. Save the files.
-12. Upload the files to your GitHub Pages repository.
+Files:
+- index.html
+- style.css
+- app.js
+- config.js
+- schema.sql
+- manifest.json
 
-IMPORTANT:
-Do NOT use a service_role key in config.js.
+IMPORTANT DATABASE STEP
+Run the updated schema.sql in Supabase SQL Editor before uploading the new app files.
+It adds:
+- game player order
+- custom/highest/lowest sorting mode
+- player history indexes
+- avatar support and storage setup
 
-This starter uses public RLS policies so the app can work without login.
-That means anyone who has access to the app can potentially read or modify the database.
+FEATURES IN THIS VERSION
+- Classic, simpler visual design
+- Dark and light mode
+- Games tab with 🎮 game icons
+- Larger, bolder bottom navigation
+- Create, rename, finish, reopen, and delete games
+- Add, edit, and delete players
+- Player pictures
+- Any score amount, positive or negative
+- Quick score buttons
+- Custom player order with up/down controls
+- Highest score first
+- Lowest score first
+- Game-wide history
+- Tap a game in History to see every score change
+- Tap a score change/player to see that player's history for that game
+- Delete all history for a game
+- Undo the most recent score change
+- Round tracking
+- Cloud sync
 
-For a private personal app, the next version should add Supabase Authentication and user-specific RLS policies.
-
-
-PLAYER PICTURES
-
-The SQL now creates:
-- avatar_url on players
-- player-avatars Supabase Storage bucket
-- Storage policies for viewing/uploading/changing/removing pictures
-
-After running the updated schema.sql, players can have profile pictures.
-The app lets you select a picture from your iPhone when adding or editing a player.
+The current RLS policies are open to anyone who has the app's public key.
+For a private app, add Supabase Authentication and user-specific RLS before making the app public.

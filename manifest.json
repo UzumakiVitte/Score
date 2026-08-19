@@ -1,8 +1,8 @@
 {
-  "name": "ScoreMate Card Game Scorekeeper",
-  "short_name": "ScoreMate",
-  "start_url": ".",
-  "display": "standalone",
-  "background_color": "#080a0f",
-  "theme_color": "#080a0f"
+  "name":"ScoreMate Classic Scorekeeper",
+  "short_name":"ScoreMate",
+  "start_url":".",
+  "display":"standalone",
+  "background_color":"#171717",
+  "theme_color":"#171717"
 }

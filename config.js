@@ -1,16 +1,6 @@
-/*
-  SUPABASE CONNECTION
+// ScoreMate Supabase connection
+// This uses the Supabase publishable key.
+// Do not replace this with a Secret key.
 
-  Replace the two values below with your Supabase project values.
-
-  Supabase Dashboard:
-  Project Settings > API
-
-  Use:
-  Project URL
-  Publishable key / anon key
-
-  Never put a Supabase service_role key in this file.
-*/
-window.SUPABASE_URL = "YOUR_SUPABASE_PROJECT_URL";
-window.SUPABASE_ANON_KEY = "YOUR_SUPABASE_PUBLISHABLE_OR_ANON_KEY";
+window.SUPABASE_URL = "https://svcggssyapzuagwzdsoq.supabase.co";
+window.SUPABASE_ANON_KEY = "sb_publishable_Y-dro7YgrPz6qa94jQv6GQ_kzbLMdcM";

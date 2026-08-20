@@ -1,17 +1,15 @@
-Scorekeeper v16
+Scorekeeper v17, Dhivehi update reverted.
 
-Display names:
+This version removes the v16 Dhivehi localization layer.
+Game names return to their previous English names:
 UnderCut
-ލަވާ
-ޑިންގު
-ހުކުން ކާލާ
+Lavaa
+Dingu
+Hukun kaalaa
 
-Dhivehi names use Faruma through the Web Faruma stylesheet.
-
-This update is a small localization layer on top of loader-v15. It does not change the existing scoring logic.
+No scoring changes are included.
 
 Upload:
-1. loader-v16.js
-2. Replace index.html
-
-Keep loader-v15.js and all existing app files.
+1. Replace index.html with this version.
+2. Keep loader-v15.js and the rest of your existing files.
+3. You can remove loader-v16.js if you uploaded it.

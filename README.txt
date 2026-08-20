@@ -1,45 +1,21 @@
-SCOREKEEPER PRIVATE ACCOUNTS
+Scorekeeper v15 Hukun kaalaa update
 
-1. Upload the app files to GitHub.
-2. Run schema.sql in Supabase SQL Editor.
-3. In Supabase Dashboard, go to Authentication > Providers > Email and turn OFF Confirm email.
-4. Open the app and create an account using a username and password.
+Files:
+- loader-v15.js
+- index.html
 
-USERNAME LOGIN
-The app displays username + password only. Supabase Auth internally uses a synthetic email address derived from the username. Users never need to enter an email in the app.
+Upload loader-v15.js to the repository.
+Replace the existing index.html with this index.html.
 
-PRIVACY
-Each account has its own games, players, scores and history. Row Level Security prevents one account from reading or changing another account's data.
+Hukun kaalaa:
+- Supports any number of players already supported by the app.
+- Each round starts with guesses.
+- Each player enters a guess.
+- After all guesses are entered, each player gets ✓ and ✕.
+- ✓ awards guess × 100.
+- ✕ deducts guess × 100.
+- The app automatically starts the next round after every player is marked.
+- The game can be finished manually.
+- Highest final score wins.
 
-LEGACY DATA
-Games created before private accounts have NULL owner_id and are hidden after schema.sql is applied. If you need to keep them, edit claim_legacy_data.sql, replace YOUR_USERNAME with your account username, and run it once in Supabase SQL Editor.
-
-CURRENT GAME FEATURES
-- UnderCut scoring
-- UnderCut settings
-- Round Winner deduction
-- Automatic round advance when every player has recorded a score
-- Previous round and current round scores shown on player cards
-- Finished games become read-only
-- Finished games move to History
-- Add existing or new players to an ongoing game
-- Player photos, emojis and built-in avatars
-
-
-VERSION 1.0.4
-Username login is fixed. The previous build used the reserved .invalid domain for Supabase's internal email mapping, which Supabase rejects. This build uses a syntactically valid private synthetic address at @scorekeeper.app.
-
-Users still enter only:
-- Username
-- Password
-
-No email address is shown or required.
-
-SUPABASE SETUP
-1. Run schema.sql in Supabase SQL Editor.
-2. In Supabase Dashboard, Authentication > Providers > Email, turn OFF Confirm email.
-3. If you already attempted to create an account with the old build, try the same username again after uploading this build. The old failed signup should not have created an account.
-4. Upload the updated files to GitHub Pages.
-
-PRIVACY
-RLS policies use auth.uid() and owner_id. Each account can only read and change its own games, players, game-player links and score history.
+The Hukun round data is stored in this browser's local storage so a refresh does not lose the current round's guesses/results. The existing game scores remain in Supabase.

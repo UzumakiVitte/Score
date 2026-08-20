@@ -206,6 +206,15 @@ function orderedPlayers() {
   return arr.sort((a, b) => a.player_order - b.player_order);
 }
 
+function previousRoundLabel(pid) {
+  const previousRound = Number(state.game.round) - 1;
+  if (previousRound < 1) return `Round ${state.game.round}`;
+  const roundScore = state.history
+    .filter(x => x.player_id === pid && Number(x.round) === previousRound)
+    .reduce((sum, x) => sum + Number(x.delta || 0), 0);
+  return `Round ${previousRound}: ${roundScore}`;
+}
+
 function renderGame() {
   setTitle(state.game.name);
   const ps = orderedPlayers();
@@ -222,7 +231,7 @@ function renderGame() {
       ${ps.map(gp => `
         <button class="simple-player" onclick="scorePlayer('${gp.player_id}')">
           ${avatar(gp.players)}
-          <div class="simple-player-main"><div class="player-name">${esc(gp.players.name)}</div><div class="player-sub">Round ${state.game.round}${gp.last_delta != null ? ` · Last ${gp.last_delta >= 0 ? "+" : ""}${gp.last_delta}` : ""}</div></div>
+          <div class="simple-player-main"><div class="player-name">${esc(gp.players.name)}</div><div class="player-sub">${previousRoundLabel(gp.player_id)}</div></div>
           <div class="score-big">${gp.score}</div><span class="chevron">›</span>
         </button>`).join("")}
     </div>
@@ -236,44 +245,63 @@ function renderGame() {
 }
 
 let selectedPlayerId = null;
-let scoreMode = 1;
+
 function scorePlayer(pid) {
   selectedPlayerId = pid;
-  scoreMode = 1;
-  const p = state.gamePlayers.find(x => x.player_id === pid)?.players;
+  const gp = state.gamePlayers.find(x => x.player_id === pid);
+  const p = gp?.players;
   if (!p) return;
+
   showModal(`
-    <div class="player-modal-head">${avatar(p)}<div><h2>${esc(p.name)}</h2><div class="game-meta">Round ${state.game.round} · Total ${state.gamePlayers.find(x => x.player_id === pid).score}</div></div></div>
+    <div class="player-modal-head">${avatar(p)}<div><h2>${esc(p.name)}</h2><div class="game-meta">Round ${state.game.round} · Total ${gp.score}</div></div></div>
     <div class="score-display" id="scoreDisplay">0</div>
     <div class="score-entry-head"><button class="score-link" onclick="undo()">↶ Undo</button><button class="score-link" onclick="redoLast()">Redo</button></div>
     <input id="scoreAmount" class="score-key-input" type="number" inputmode="numeric" placeholder="0" autocomplete="off">
-    <div class="score-mode"><button id="addMode" class="selected" onclick="setScoreMode(1)">＋</button><button id="subMode" onclick="setScoreMode(-1)">−</button></div>
+    <div class="score-mode">
+      <button id="addMode" onclick="saveScore(1)">＋</button>
+      <button id="subMode" onclick="saveScore(-1)">−</button>
+    </div>
     ${isUnderCutGame() ? `<button class="undercut-action" onclick="startUndercut('${pid}')"><span>✦</span><b>Undercut</b><small>+${state.undercutSettings.undercutAward} points</small></button>` : ""}
-    <div class="actions" style="margin-top:14px"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveScore()">Add Score</button></div>`);
+    <div class="actions" style="margin-top:14px"><button class="btn" onclick="closeModal()">Cancel</button></div>`);
+
   const input = $("#scoreAmount");
-  input.addEventListener("input", () => { $("#scoreDisplay").textContent = input.value || "0"; });
+  input.addEventListener("input", () => {
+    $("#scoreDisplay").textContent = input.value || "0";
+  });
   input.focus();
 }
-function setScoreMode(m) { scoreMode = m; $("#addMode").classList.toggle("selected", m === 1); $("#subMode").classList.toggle("selected", m === -1); }
 
 async function applyDelta(pid, delta) {
   const gp = state.gamePlayers.find(x => x.player_id === pid);
   if (!gp || !delta) return false;
-  const { error: e } = await sb.from("score_changes").insert({ game_id: state.game.id, player_id: pid, round: state.game.round, delta });
+  const { error: e } = await sb.from("score_changes").insert({
+    game_id: state.game.id,
+    player_id: pid,
+    round: state.game.round,
+    delta
+  });
   if (e) { toast(e.message); return false; }
   const { error: u } = await sb.from("game_players").update({ score: gp.score + delta }).eq("id", gp.id);
   if (u) { toast(u.message); return false; }
   return true;
 }
-async function saveScore() {
-  const amount = Number($("#scoreAmount").value);
+
+async function saveScore(direction) {
+  const input = $("#scoreAmount");
+  const amount = Number(input?.value);
   if (!Number.isFinite(amount)) { toast("Enter a score"); return; }
-  const delta = Math.trunc(amount) * scoreMode;
-  if (!delta) { toast("Enter a score other than 0"); return; }
+  const wholeAmount = Math.trunc(Math.abs(amount));
+  if (!wholeAmount) { toast("Enter a score other than 0"); return; }
+
+  const delta = wholeAmount * direction;
   if (!(await applyDelta(selectedPlayerId, delta))) return;
+
   await sb.from("games").update({ updated_at: new Date().toISOString() }).eq("id", state.game.id);
-  closeModal(); await openGame(state.game.id); toast(delta >= 0 ? `+${delta}` : `${delta}`);
+  closeModal();
+  await openGame(state.game.id);
+  toast(delta >= 0 ? `+${delta}` : `${delta}`);
 }
+
 async function quickScore(delta) {
   if (!selectedPlayerId) { toast("Tap a player first"); return; }
   if (!(await applyDelta(selectedPlayerId, delta))) return;
@@ -329,7 +357,7 @@ async function nextRound() {
 }
 async function finishGame() {
   const ps = orderedPlayers(); if (!ps.length) return;
-  const sorted = [...ps].sort((a, b) => b.score - a.score);
+  const sorted = [...ps].sort((a, b) => isUnderCutGame() ? a.score - b.score : b.score - a.score);
   const winner = sorted[0];
   await sb.from("games").update({ status: "completed", updated_at: new Date().toISOString() }).eq("id", state.game.id);
   state.game.status = "completed";

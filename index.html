@@ -1,125 +1,40 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#151515">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0d1728">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <title>ScoreMate</title>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="style.css">
+  <title>Scorekeeper</title>
 </head>
 <body>
-<div id="app">
-  <header class="topbar">
-    <button class="icon-btn" id="menuBtn" aria-label="Settings">☰</button>
-    <div class="title-wrap">
-      <div class="eyebrow">CARD SCOREKEEPER</div>
-      <h1 id="pageTitle">Games</h1>
-    </div>
-    <button class="icon-btn" id="themeBtn" aria-label="Toggle theme">☀</button>
-  </header>
-
-  <main>
-    <section id="gamesView" class="view active">
-      <div class="cloud-status" id="cloudStatus">Connecting to cloud...</div>
-      <div class="search"><span>⌕</span><input id="gameSearch" placeholder="Search games" autocomplete="off"></div>
-      <div class="segmented">
-        <button class="active" data-filter="active">In Progress</button>
-        <button data-filter="completed">Completed</button>
+  <div id="app">
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">CARD SCOREKEEPER</div>
+        <h1 id="pageTitle">Games</h1>
       </div>
-      <div id="gamesList" class="list"></div>
-      <button class="primary big" id="newGameBtn">＋ New Game</button>
-    </section>
+      <button class="icon-btn" id="themeBtn" aria-label="Toggle theme">☀️</button>
+    </header>
 
-    <section id="playersView" class="view">
-      <div class="search"><span>⌕</span><input id="playerSearch" placeholder="Search players" autocomplete="off"></div>
-      <div id="playersList" class="list"></div>
-      <button class="primary big" id="addPlayerBtn">＋ Add Player</button>
-    </section>
+    <main id="content"></main>
 
-    <section id="gameView" class="view">
-      <div class="game-head">
-        <button class="back" id="backBtn">‹ Games</button>
-        <div class="game-title"><h2 id="gameName">Game</h2><span id="roundLabel">Round 1</span></div>
-        <div class="head-actions">
-          <button class="icon-btn small" id="orderBtn" title="Player order">⇅</button>
-          <button class="icon-btn small danger-icon" id="gameMenuBtn" title="Game options">•••</button>
-        </div>
-      </div>
-      <div id="scoreCards" class="score-cards"></div>
-      <div class="quick-title">Quick score</div>
-      <div class="quick-grid" id="quickGrid"></div>
-      <div class="game-actions">
-        <button class="secondary" id="undoBtn">↶ Undo</button>
-        <button class="secondary" id="historyBtn">History</button>
-        <button class="primary" id="nextRoundBtn">Next Round</button>
-      </div>
-      <button class="finish-btn" id="finishGameBtn">Finish Game</button>
-    </section>
-
-    <section id="historyView" class="view">
-      <div class="section-intro">
-        <h2>History</h2>
-        <p>Choose a game to see its complete score history.</p>
-      </div>
-      <div id="historyList" class="list"></div>
-    </section>
-
-    <section id="gameHistoryView" class="view">
-      <div class="game-head">
-        <button class="back" id="historyBackBtn">‹ History</button>
-        <div class="game-title"><h2 id="historyGameName">Game</h2><span id="historyGameMeta"></span></div>
-        <button class="icon-btn small" id="deleteGameHistoryBtn" title="Delete history">⌫</button>
-      </div>
-      <div id="gameHistoryList" class="history-list"></div>
-    </section>
-
-    <section id="playerHistoryView" class="view">
-      <div class="game-head">
-        <button class="back" id="playerHistoryBackBtn">‹ Game</button>
-        <div class="game-title"><h2 id="playerHistoryName">Player</h2><span id="playerHistoryGame"></span></div>
-        <span></span>
-      </div>
-      <div id="playerHistoryList" class="history-list"></div>
-    </section>
-
-    <section id="settingsView" class="view">
-      <div class="section-intro"><h2>Settings</h2><p>Simple controls for the scorekeeper.</p></div>
-      <div class="settings-card">
-        <h3>Appearance</h3>
-        <p>Switch between light and dark mode.</p>
-        <div class="theme-choice">
-          <button data-theme-choice="dark">Dark</button>
-          <button data-theme-choice="light">Light</button>
-        </div>
-      </div>
-      <div class="settings-card">
-        <h3>Cloud sync</h3>
-        <p id="accountStatus">Checking connection...</p>
-        <button class="secondary wide" id="syncBtn">Sync now</button>
-      </div>
-    </section>
-  </main>
-
-  <nav class="bottom-nav">
-    <button class="nav active" data-view="gamesView"><span class="nav-icon">🎮</span><strong>Games</strong></button>
-    <button class="nav" data-view="playersView"><span class="nav-icon">👤</span><strong>Players</strong></button>
-    <button class="nav" data-view="historyView"><span class="nav-icon">🕘</span><strong>History</strong></button>
-    <button class="nav" data-view="settingsView"><span class="nav-icon">⚙️</span><strong>Settings</strong></button>
-  </nav>
-</div>
-
-<div class="modal hidden" id="modal">
-  <div class="modal-box">
-    <button class="close" id="closeModal">×</button>
-    <div id="modalContent"></div>
+    <nav class="bottom-nav">
+      <button data-tab="games" class="nav-item active"><span>🎮</span><b>Games</b></button>
+      <button data-tab="players" class="nav-item"><span>👤</span><b>Players</b></button>
+      <button data-tab="history" class="nav-item"><span>🕘</span><b>History</b></button>
+      <button data-tab="settings" class="nav-item"><span>⚙️</span><b>Settings</b></button>
+    </nav>
   </div>
-</div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="config.js"></script>
-<script src="app.js"></script>
+  <div id="modalRoot"></div>
+  <div id="toast"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>

@@ -1,409 +1,405 @@
 const { createClient } = window.supabase;
-const configured = window.SUPABASE_URL && !window.SUPABASE_URL.startsWith("YOUR_") &&
-                   window.SUPABASE_ANON_KEY && !window.SUPABASE_ANON_KEY.startsWith("YOUR_");
-const db = configured ? createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY) : null;
+const sb = createClient(SCORE_CONFIG.SUPABASE_URL, SCORE_CONFIG.SUPABASE_PUBLISHABLE_KEY);
+
+const DEFAULT_SETTINGS = { undercutAward: 60, undercutPenalty: 10 };
+const state = {
+  tab: "games",
+  games: [],
+  players: [],
+  game: null,
+  gamePlayers: [],
+  history: [],
+  sortMode: "custom",
+  theme: localStorage.getItem("score_theme") || "dark",
+  undercutSettings: loadUndercutSettings()
+};
 
 const $ = s => document.querySelector(s);
-const $$ = s => [...document.querySelectorAll(s)];
-const THEME_KEY = "scoremate-theme";
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+const toast = msg => { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 1800); };
+document.documentElement.dataset.theme = state.theme;
 
-let players = [];
-let games = [];
-let history = [];
-let currentGameId = null;
-let currentHistoryGameId = null;
-let currentPlayerHistoryId = null;
-let currentFilter = "active";
-let pendingScore = 0;
+function loadUndercutSettings() {
+  try { return { ...DEFAULT_SETTINGS, ...(JSON.parse(localStorage.getItem("score_undercut_settings") || "{}")) }; }
+  catch { return { ...DEFAULT_SETTINGS }; }
+}
+function saveUndercutSettings() {
+  localStorage.setItem("score_undercut_settings", JSON.stringify(state.undercutSettings));
+}
+function isUnderCutGame() {
+  return state.game && String(state.game.name).trim().toLowerCase() === "undercut";
+}
+function avatar(p) {
+  if (p?.avatar_url) return `<img class="avatar" src="${esc(p.avatar_url)}" alt="">`;
+  return `<div class="avatar">${esc((p?.name || "?").slice(0, 1).toUpperCase())}</div>`;
+}
+function setTitle(t) { $("#pageTitle").textContent = t; }
 
-const colors = ["#6b45d8","#2d76d2","#2d9d5c","#d69b00","#c75a43","#218d9e","#a044b6","#68707c"];
-
-function esc(s){return String(s ?? "").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]));}
-function initials(name){return String(name||"?").trim().slice(0,1).toUpperCase()||"?";}
-function avatarHTML(p,i=0,cls="avatar"){
-  if(p?.avatar_url) return `<img class="${cls} avatar-photo" src="${esc(p.avatar_url)}" alt="">`;
-  return `<span class="${cls}" style="--avatar:${colors[i%colors.length]}">${initials(p?.name)}</span>`;
-}
-function playerName(id){return players.find(p=>p.id===id)?.name || "Player";}
-function playerObj(id){return players.find(p=>p.id===id);}
-function gameObj(id){return games.find(g=>g.id===id);}
-function gameName(id){return gameObj(id)?.name || "Game";}
-function setStatus(text,good=false){
-  $("#cloudStatus").textContent=text;
-  $("#cloudStatus").className="cloud-status"+(good?" good":"");
-  $("#accountStatus").textContent=text;
-}
-function applyTheme(){
-  const theme=localStorage.getItem(THEME_KEY)||"dark";
-  document.documentElement.classList.toggle("dark",theme==="dark");
-  $("#themeBtn").textContent=theme==="dark"?"☀":"☾";
-  $$("[data-theme-choice]").forEach(b=>b.classList.toggle("active",b.dataset.themeChoice===theme));
-}
-function saveTheme(t){localStorage.setItem(THEME_KEY,t);applyTheme();}
-function showView(id){
-  $$(".view").forEach(v=>v.classList.remove("active"));
-  $("#"+id).classList.add("active");
-  $$(".nav").forEach(n=>n.classList.toggle("active",n.dataset.view===id));
-  const titles={gamesView:"Games",playersView:"Players",historyView:"History",settingsView:"Settings",gameView:"Game",gameHistoryView:"History",playerHistoryView:"History"};
-  $("#pageTitle").textContent=titles[id]||"ScoreMate";
-  if(id==="gamesView") renderGames();
-  if(id==="playersView") renderPlayers();
-  if(id==="historyView") renderHistory();
-}
-function openModal(html){$("#modalContent").innerHTML=html;$("#modal").classList.remove("hidden");}
-function closeModal(){$("#modal").classList.add("hidden");$("#modalContent").innerHTML="";}
-$("#closeModal").onclick=closeModal;
-$("#modal").onclick=e=>{if(e.target.id==="modal")closeModal();};
-
-async function loadAll(){
-  if(!db){setStatus("Cloud not connected. Check config.js.");return;}
-  setStatus("Syncing...");
-  const [pRes,gRes,hRes]=await Promise.all([
-    db.from("players").select("*").order("created_at",{ascending:true}),
-    db.from("games").select("*").order("updated_at",{ascending:false}),
-    db.from("score_changes").select("*").order("created_at",{ascending:true})
+async function loadAll() {
+  const [g, p] = await Promise.all([
+    sb.from("games").select("*").order("updated_at", { ascending: false }),
+    sb.from("players").select("*").order("name")
   ]);
-  if(pRes.error||gRes.error||hRes.error){
-    console.error(pRes.error||gRes.error||hRes.error);
-    setStatus("Database error. Run the updated schema.sql.");
-    return;
-  }
-  players=pRes.data||[];
-  history=hRes.data||[];
-  const gpRes=await db.from("game_players").select("id,game_id,player_id,score,player_order,players(id,name,avatar_url)");
-  if(gpRes.error){console.error(gpRes.error);setStatus("Could not load game players.");return;}
-  games=(gRes.data||[]).map(g=>({
-    ...g,
-    players:(gpRes.data||[])
-      .filter(x=>x.game_id===g.id)
-      .map(x=>({id:x.id,playerId:x.player_id,score:x.score,player_order:x.player_order,name:x.players?.name||"Player",avatar_url:x.players?.avatar_url||null}))
-  }));
-  games.forEach(g=>g.players=sortPlayers(g,g.players));
-  setStatus("Cloud synced ✓",true);
-  renderGames();
-  if(currentGameId && gameObj(currentGameId)) renderGame();
-  if(currentHistoryGameId && gameObj(currentHistoryGameId)) renderGameHistory();
-}
-function sortPlayers(g,list){
-  const arr=[...list];
-  if(g.sort_mode==="highest") return arr.sort((a,b)=>b.score-a.score || a.player_order-b.player_order);
-  if(g.sort_mode==="lowest") return arr.sort((a,b)=>a.score-b.score || a.player_order-b.player_order);
-  return arr.sort((a,b)=>a.player_order-b.player_order);
-}
-function renderGames(){
-  const q=$("#gameSearch").value.toLowerCase().trim();
-  const list=games.filter(g=>{
-    const status=currentFilter==="active"?"active":"completed";
-    return g.status===status && g.name.toLowerCase().includes(q);
-  });
-  $("#gamesList").innerHTML=list.length?list.map(g=>{
-    const leader=[...g.players].sort((a,b)=>b.score-a.score)[0];
-    return `<button class="game-item" data-open-game="${g.id}">
-      <div class="game-icon">🎮</div>
-      <div class="item-main"><h3>${esc(g.name)}</h3><p>${g.players.length} players · ${g.round} round${g.round===1?"":"s"}</p></div>
-      <div class="score-preview"><strong>${leader?esc(leader.name):"No players"}</strong><span>${leader?leader.score+" pts":""}</span></div>
-    </button>`;
-  }).join(""):`<div class="empty">No ${currentFilter==="active"?"games in progress":"completed games"}.</div>`;
-  $$("[data-open-game]").forEach(b=>b.onclick=()=>openGame(b.dataset.openGame));
-}
-function renderPlayers(){
-  const q=$("#playerSearch").value.toLowerCase().trim();
-  const list=players.filter(p=>p.name.toLowerCase().includes(q));
-  $("#playersList").innerHTML=list.length?list.map((p,i)=>`
-    <button class="player-item" data-edit-player="${p.id}">
-      ${avatarHTML(p,i)}
-      <span class="item-main"><strong>${esc(p.name)}</strong><p>Tap to edit or delete</p></span>
-      <span>›</span>
-    </button>`).join(""):`<div class="empty">No players found.</div>`;
-  $$("[data-edit-player]").forEach(b=>b.onclick=()=>editPlayer(b.dataset.editPlayer));
-}
-function renderHistory(){
-  const completedAndActive=games.filter(g=>history.some(h=>h.game_id===g.id));
-  $("#historyList").innerHTML=completedAndActive.length?completedAndActive.map(g=>{
-    const count=history.filter(h=>h.game_id===g.id).length;
-    return `<button class="history-game" data-history-game="${g.id}">
-      <div class="game-icon">🎮</div>
-      <div class="item-main"><h3>${esc(g.name)}</h3><p>${count} score changes · ${g.status==="completed"?"Completed":"In progress"}</p></div>
-      <span class="chevron">›</span>
-    </button>`;
-  }).join(""):`<div class="empty">No score history yet.</div>`;
-  $$("[data-history-game]").forEach(b=>b.onclick=()=>openGameHistory(b.dataset.historyGame));
-}
-function renderGameHistory(){
-  const g=gameObj(currentHistoryGameId);if(!g)return;
-  $("#historyGameName").textContent=g.name;
-  $("#historyGameMeta").textContent=`${history.filter(h=>h.game_id===g.id).length} score changes`;
-  const rows=history.filter(h=>h.game_id===g.id).slice().reverse();
-  $("#gameHistoryList").innerHTML=rows.length?rows.map(h=>{
-    const p=playerObj(h.player_id)||{name:"Player"};
-    return `<button class="history-item" data-player-history="${h.player_id}">
-      <div class="round-label">Round ${h.round}</div>
-      <div class="history-row">${avatarHTML(p,0)}<span class="grow"><strong>${esc(p.name)}</strong><div class="history-meta">${new Date(h.created_at).toLocaleString()}</div></span><span class="history-delta ${h.delta>=0?"plus":"minus"}">${h.delta>=0?"+":""}${h.delta}</span></div>
-    </button>`;
-  }).join(""):`<div class="empty">No score history for this game.</div>`;
-  $$("[data-player-history]").forEach(b=>b.onclick=()=>openPlayerHistory(currentHistoryGameId,b.dataset.playerHistory));
-}
-function renderPlayerHistory(){
-  const g=gameObj(currentHistoryGameId),p=playerObj(currentPlayerHistoryId);if(!g||!p)return;
-  $("#playerHistoryName").textContent=p.name;
-  $("#playerHistoryGame").textContent=g.name;
-  const rows=history.filter(h=>h.game_id===g.id&&h.player_id===p.id).slice().reverse();
-  let running=0;
-  const chronological=rows.slice().reverse();
-  const totals=new Map();
-  chronological.forEach(h=>{running+=h.delta;totals.set(h.id,running)});
-  $("#playerHistoryList").innerHTML=rows.length?rows.map(h=>{
-    const total=totals.get(h.id);
-    return `<div class="history-item"><div class="round-label">Round ${h.round}</div><div class="history-row"><span class="grow"><strong>${h.delta>=0?"+":""}${h.delta} points</strong><div class="history-meta">${new Date(h.created_at).toLocaleString()} · Total after change: ${total}</div></span><span class="history-delta ${h.delta>=0?"plus":"minus"}">${total}</span></div></div>`;
-  }).join(""):`<div class="empty">No score changes for this player.</div>`;
-}
-function openGame(id){currentGameId=id;showView("gameView");renderGame();}
-function renderGame(){
-  const g=gameObj(currentGameId);if(!g)return;
-  $("#gameName").textContent=g.name;$("#roundLabel").textContent=`Round ${g.round}`;
-  const ps=sortPlayers(g,g.players);
-  $("#scoreCards").innerHTML=ps.map((p,i)=>`
-    <div class="score-card" style="--player-color:${colors[i%colors.length]}">
-      ${avatarHTML(p,i)}
-      <div class="grow"><div class="name">${esc(p.name)}</div><div class="score ${p.score<0?"negative":""}">${p.score}</div></div>
-      <div class="score-buttons"><button class="add" data-plus="${p.playerId}">+</button><button data-minus="${p.playerId}">−</button></div>
-    </div>`).join("") || `<div class="empty">No players in this game.</div>`;
-  $$("#scoreCards [data-plus]").forEach(b=>b.onclick=()=>openScoreModal(b.dataset.plus));
-  $$("#scoreCards [data-minus]").forEach(b=>b.onclick=()=>openScoreModal(b.dataset.minus));
-  const vals=[5,10,25,50,100,-5,-10,-25,-50,-100];
-  $("#quickGrid").innerHTML=vals.map(n=>`<button data-quick="${n}">${n>0?"+":"−"}${Math.abs(n)}</button>`).join("");
-  $$("#quickGrid [data-quick]").forEach(b=>b.onclick=()=>choosePlayerForQuick(Number(b.dataset.quick)));
-}
-function openScoreModal(pid){
-  const p=gameObj(currentGameId).players.find(x=>x.playerId===pid);
-  openModal(`<h2>Score ${esc(p?.name||"Player")}</h2>
-    <div class="field"><label>Amount</label><input id="scoreAmount" type="number" inputmode="decimal" placeholder="Enter any amount" value="10"></div>
-    <div class="theme-choice"><button id="addMode" class="active">Add points</button><button id="subtractMode">Subtract points</button></div>
-    <button class="primary wide" id="saveScore">Save score</button>`);
-  let sign=1;
-  $("#addMode").onclick=()=>{sign=1;$("#addMode").classList.add("active");$("#subtractMode").classList.remove("active")};
-  $("#subtractMode").onclick=()=>{sign=-1;$("#subtractMode").classList.add("active");$("#addMode").classList.remove("active")};
-  $("#saveScore").onclick=()=>{const n=Number($("#scoreAmount").value);if(!Number.isFinite(n)||n===0)return alert("Enter an amount.");closeModal();addScore(pid,sign*Math.abs(n));};
-  setTimeout(()=>$("#scoreAmount").focus(),50);
-}
-function choosePlayerForQuick(delta){
-  const g=gameObj(currentGameId);
-  if(g.players.length===1){addScore(g.players[0].playerId,delta);return;}
-  openModal(`<h2>${delta>=0?"Add":"Subtract"} ${Math.abs(delta)} points</h2><div class="check-list">
-    ${g.players.map((p,i)=>`<button class="player-item" data-pick-player="${p.playerId}">${avatarHTML(p,i)}<span class="item-main"><strong>${esc(p.name)}</strong><p>${p.score} points</p></span></button>`).join("")}</div>
-    <button class="secondary wide" id="customInstead">Enter a different amount</button>`);
-  $$("[data-pick-player]").forEach(b=>b.onclick=()=>{closeModal();addScore(b.dataset.pickPlayer,delta)});
-  $("#customInstead").onclick=()=>{closeModal();openScoreModal(g.players[0].playerId);};
-}
-async function addScore(pid,delta){
-  const g=gameObj(currentGameId);if(!g||!pid)return;
-  const p=g.players.find(x=>x.playerId===pid);if(!p)return;
-  const newScore=p.score+delta;
-  const up=await db.from("game_players").update({score:newScore}).eq("id",p.id);
-  if(up.error){alert(up.error.message);return;}
-  const ins=await db.from("score_changes").insert({game_id:g.id,player_id:pid,round:g.round,delta});
-  if(ins.error){alert(ins.error.message);return;}
-  await db.from("games").update({updated_at:new Date().toISOString()}).eq("id",g.id);
-  await loadAll();
-}
-async function undo(){
-  const g=gameObj(currentGameId);if(!g)return;
-  const {data,error}=await db.from("score_changes").select("*").eq("game_id",g.id).order("created_at",{ascending:false}).limit(1).maybeSingle();
-  if(error||!data){alert("Nothing to undo.");return;}
-  const p=g.players.find(x=>x.playerId===data.player_id);if(!p)return;
-  const up=await db.from("game_players").update({score:p.score-data.delta}).eq("id",p.id);
-  if(up.error){alert(up.error.message);return;}
-  const del=await db.from("score_changes").delete().eq("id",data.id);
-  if(del.error){alert(del.error.message);return;}
-  await loadAll();
-}
-async function nextRound(){
-  const g=gameObj(currentGameId);if(!g)return;
-  await db.from("games").update({round:g.round+1,updated_at:new Date().toISOString()}).eq("id",g.id);
-  await loadAll();
-}
-async function finishGame(){
-  const g=gameObj(currentGameId);if(!g)return;
-  await db.from("games").update({status:"completed",updated_at:new Date().toISOString()}).eq("id",g.id);
-  await loadAll();showView("gamesView");
-}
-async function deleteGame(id){
-  const g=gameObj(id);if(!g)return;
-  openModal(`<h2>Delete game?</h2><p class="confirm-text">This permanently removes <strong>${esc(g.name)}</strong>, its players in the game, scores, and all score history.</p><div class="confirm-actions"><button class="secondary" id="cancelDelete">Cancel</button><button class="danger-btn" id="confirmDelete">Delete</button></div>`);
-  $("#cancelDelete").onclick=closeModal;
-  $("#confirmDelete").onclick=async()=>{
-    const {error}=await db.from("games").delete().eq("id",id);
-    if(error){alert(error.message);return;}
-    closeModal();currentGameId=null;currentHistoryGameId=null;await loadAll();showView("gamesView");
-  };
-}
-async function deleteHistory(id){
-  openModal(`<h2>Delete all history?</h2><p class="confirm-text">This removes every score change for this game. Current player scores will remain unchanged.</p><div class="confirm-actions"><button class="secondary" id="cancelHistoryDelete">Cancel</button><button class="danger-btn" id="confirmHistoryDelete">Delete</button></div>`);
-  $("#cancelHistoryDelete").onclick=closeModal;
-  $("#confirmHistoryDelete").onclick=async()=>{
-    const {error}=await db.from("score_changes").delete().eq("game_id",id);
-    if(error){alert(error.message);return;}
-    closeModal();await loadAll();renderGameHistory();
-  };
-}
-function openGameHistory(id){currentHistoryGameId=id;showView("gameHistoryView");renderGameHistory();}
-function openPlayerHistory(gameId,playerId){currentHistoryGameId=gameId;currentPlayerHistoryId=playerId;showView("playerHistoryView");renderPlayerHistory();}
-
-async function editPlayer(id){
-  const p=playerObj(id);if(!p)return;
-  openModal(`<h2>Edit player</h2>
-    <div class="profile-editor"><div id="playerPreview">${avatarHTML(p,0,"avatar large-avatar")}</div>
-    <label class="upload-btn">📷 ${p.avatar_url?"Change picture":"Add picture"}<input id="avatarInput" type="file" accept="image/*" hidden></label></div>
-    <div class="field"><label>Name</label><input id="editPlayerName" value="${esc(p.name)}"></div>
-    <button class="primary wide" id="savePlayer">Save</button>
-    ${p.avatar_url?'<button class="secondary wide" id="removeAvatar" style="margin-top:8px">Remove picture</button>':""}
-    <button class="danger-btn" id="deletePlayer">Delete player</button>`);
-  $("#avatarInput").onchange=e=>{const f=e.target.files?.[0];if(f)$("#playerPreview").innerHTML=`<img class="avatar large-avatar avatar-photo" src="${URL.createObjectURL(f)}" alt="">`;};
-  if($("#removeAvatar"))$("#removeAvatar").onclick=async()=>{
-    await db.from("players").update({avatar_url:null}).eq("id",id);closeModal();await loadAll();renderPlayers();
-  };
-  $("#savePlayer").onclick=async()=>{
-    const name=$("#editPlayerName").value.trim();if(!name)return;
-    const file=$("#avatarInput").files?.[0];let avatar_url=p.avatar_url;
-    if(file){
-      const ext=(file.name.split(".").pop()||"jpg").toLowerCase();
-      const path=`${id}/${crypto.randomUUID()}.${ext}`;
-      const up=await db.storage.from("player-avatars").upload(path,file,{upsert:true,contentType:file.type});
-      if(up.error){alert(up.error.message);return;}
-      avatar_url=db.storage.from("player-avatars").getPublicUrl(path).data.publicUrl;
-    }
-    const {error}=await db.from("players").update({name,avatar_url}).eq("id",id);
-    if(error){alert(error.message);return;}
-    closeModal();await loadAll();renderPlayers();
-  };
-  $("#deletePlayer").onclick=()=>confirmDeletePlayer(id);
-}
-function confirmDeletePlayer(id){
-  const p=playerObj(id);if(!p)return;
-  openModal(`<h2>Delete player?</h2><p class="confirm-text">Delete <strong>${esc(p.name)}</strong> everywhere? Their saved games and score history will lose this player.</p><div class="confirm-actions"><button class="secondary" id="cancelP">Cancel</button><button class="danger-btn" id="confirmP">Delete</button></div>`);
-  $("#cancelP").onclick=closeModal;
-  $("#confirmP").onclick=async()=>{
-    const {error}=await db.from("players").delete().eq("id",id);
-    if(error){alert(error.message);return;}
-    closeModal();await loadAll();renderPlayers();
-  };
-}
-async function addPlayer(){
-  const name=$("#newPlayerName").value.trim();if(!name)return;
-  if(players.some(p=>p.name.toLowerCase()===name.toLowerCase())){alert("That player already exists.");return;}
-  const {data,error}=await db.from("players").insert({name}).select().single();
-  if(error){alert(error.message);return;}
-  const file=$("#newAvatarInput")?.files?.[0];
-  if(file){
-    const ext=(file.name.split(".").pop()||"jpg").toLowerCase();
-    const path=`${data.id}/${crypto.randomUUID()}.${ext}`;
-    const up=await db.storage.from("player-avatars").upload(path,file,{upsert:true,contentType:file.type});
-    if(!up.error){
-      const avatar_url=db.storage.from("player-avatars").getPublicUrl(path).data.publicUrl;
-      await db.from("players").update({avatar_url}).eq("id",data.id);
-    }
-  }
-  closeModal();await loadAll();renderPlayers();
-}
-function newPlayer(){
-  openModal(`<h2>Add player</h2><div class="profile-editor"><div id="newPlayerPreview">${avatarHTML({name:"?"},0,"avatar large-avatar")}</div><label class="upload-btn">📷 Add picture<input id="newAvatarInput" type="file" accept="image/*" hidden></label></div><div class="field"><label>Name</label><input id="newPlayerName" placeholder="Player name"></div><button class="primary wide" id="createPlayer">Add Player</button>`);
-  $("#newAvatarInput").onchange=e=>{const f=e.target.files?.[0];if(f)$("#newPlayerPreview").innerHTML=`<img class="avatar large-avatar avatar-photo" src="${URL.createObjectURL(f)}" alt="">`;};
-  $("#createPlayer").onclick=addPlayer;
-}
-async function newGame(){
-  if(!players.length){alert("Add at least one player first.");return;}
-  const checks=players.map((p,i)=>`<label class="check-row"><input type="checkbox" value="${p.id}" ${i<4?"checked":""}>${avatarHTML(p,i,"avatar") }<span>${esc(p.name)}</span></label>`).join("");
-  openModal(`<h2>New Game</h2>
-    <div class="field"><label>Game name</label><input id="newGameName" placeholder="e.g. Rummy Night"></div>
-    <div class="field"><label>Players</label><div class="check-list" id="playerChecks">${checks}</div></div>
-    <div class="field"><label>Target score (optional)</label><input id="winningScore" type="number" inputmode="numeric" value="500"></div>
-    <div class="field"><label>Winner rule</label><div class="mode-buttons"><button id="higher" class="active">Higher wins</button><button id="lower">Lower wins</button><button id="none">No target</button></div></div>
-    <button class="primary wide" id="startGame">Start Game</button>`);
-  let rule="higher", target=500;
-  $("#higher").onclick=()=>{rule="higher";$("#higher").classList.add("active");$("#lower").classList.remove("active");$("#none").classList.remove("active");};
-  $("#lower").onclick=()=>{rule="lower";$("#lower").classList.add("active");$("#higher").classList.remove("active");$("#none").classList.remove("active");};
-  $("#none").onclick=()=>{rule="higher";target=0;$("#none").classList.add("active");$("#higher").classList.remove("active");$("#lower").classList.remove("active");};
-  $("#startGame").onclick=async()=>{
-    const name=$("#newGameName").value.trim()||"Card Game";
-    const ids=$$("#playerChecks input:checked").map(x=>x.value);
-    if(!ids.length){alert("Select at least one player.");return;}
-    const targetInput=Number($("#winningScore").value);
-    target=$("#none").classList.contains("active")?0:(Number.isFinite(targetInput)&&targetInput>0?targetInput:500);
-    const {data,error}=await db.from("games").insert({name,winning_score:target,winner_rule:rule,sort_mode:"custom"}).select().single();
-    if(error){alert(error.message);return;}
-    const rows=ids.map((player_id,i)=>({game_id:data.id,player_id,score:0,player_order:i}));
-    const ins=await db.from("game_players").insert(rows);
-    if(ins.error){alert(ins.error.message);return;}
-    closeModal();await loadAll();openGame(data.id);
-  };
-}
-async function openOrder(){
-  const g=gameObj(currentGameId);if(!g)return;
-  const ps=sortPlayers(g,g.players);
-  openModal(`<h2>Player order</h2>
-    <div class="field"><label>Automatic order</label><div class="mode-buttons">
-      <button data-mode="custom" class="${g.sort_mode==="custom"?"active":""}">Custom</button>
-      <button data-mode="highest" class="${g.sort_mode==="highest"?"active":""}">Highest first</button>
-      <button data-mode="lowest" class="${g.sort_mode==="lowest"?"active":""}">Lowest first</button>
-    </div></div>
-    <div id="customOrderArea"></div>`);
-  async function setMode(mode){
-    await db.from("games").update({sort_mode:mode,updated_at:new Date().toISOString()}).eq("id",g.id);
-    await loadAll();openOrder();
-  }
-  $$("[data-mode]").forEach(b=>b.onclick=()=>setMode(b.dataset.mode));
-  function renderCustom(){
-    if(g.sort_mode!=="custom"){$("#customOrderArea").innerHTML=`<p class="confirm-text">Switch to Custom to manually arrange players.</p>`;return;}
-    $("#customOrderArea").innerHTML=`<div class="order-list">${ps.map((p,i)=>`<div class="order-row"><span class="item-main">${i+1}. ${esc(p.name)}</span><div class="move-buttons"><button data-up="${p.playerId}" ${i===0?"disabled":""}>↑</button><button data-down="${p.playerId}" ${i===ps.length-1?"disabled":""}>↓</button></div></div>`).join("")}</div>`;
-    $$("[data-up]").forEach(b=>b.onclick=()=>movePlayer(b.dataset.up,-1));
-    $$("[data-down]").forEach(b=>b.onclick=()=>movePlayer(b.dataset.down,1));
-  }
-  async function movePlayer(pid,dir){
-    const ordered=[...g.players].sort((a,b)=>a.player_order-b.player_order);
-    const idx=ordered.findIndex(p=>p.playerId===pid);const next=idx+dir;
-    if(idx<0||next<0||next>=ordered.length)return;
-    [ordered[idx],ordered[next]]=[ordered[next],ordered[idx]];
-    for(let i=0;i<ordered.length;i++)await db.from("game_players").update({player_order:i}).eq("id",ordered[i].id);
-    await loadAll();openOrder();
-  }
-  renderCustom();
-}
-function gameMenu(){
-  const g=gameObj(currentGameId);if(!g)return;
-  openModal(`<h2>${esc(g.name)}</h2>
-    <button class="secondary wide" id="renameGame">Rename game</button>
-    <button class="secondary wide" id="finishFromMenu" style="margin-top:7px">${g.status==="completed"?"Mark in progress":"Finish game"}</button>
-    <button class="danger-btn" id="deleteGameFromMenu">Delete game</button>`);
-  $("#renameGame").onclick=()=>renameGame(g.id);
-  $("#finishFromMenu").onclick=async()=>{closeModal();if(g.status==="completed"){await db.from("games").update({status:"active"}).eq("id",g.id);await loadAll();}else finishGame();};
-  $("#deleteGameFromMenu").onclick=()=>deleteGame(g.id);
-}
-function renameGame(id){
-  const g=gameObj(id);closeModal();
-  openModal(`<h2>Rename game</h2><div class="field"><label>Game name</label><input id="renameInput" value="${esc(g.name)}"></div><button class="primary wide" id="saveRename">Save</button>`);
-  $("#saveRename").onclick=async()=>{const name=$("#renameInput").value.trim();if(!name)return;const {error}=await db.from("games").update({name,updated_at:new Date().toISOString()}).eq("id",id);if(error)alert(error.message);else{closeModal();await loadAll();}};
+  if (g.error) return toast(g.error.message);
+  if (p.error) return toast(p.error.message);
+  state.games = g.data || [];
+  state.players = p.data || [];
+  render();
 }
 
-$("#newGameBtn").onclick=newGame;
-$("#addPlayerBtn").onclick=newPlayer;
-$("#gameSearch").oninput=renderGames;
-$("#playerSearch").oninput=renderPlayers;
-$("#themeBtn").onclick=()=>saveTheme((localStorage.getItem(THEME_KEY)||"dark")==="dark"?"light":"dark");
-$("#menuBtn").onclick=()=>showView("settingsView");
-$("#backBtn").onclick=()=>showView("gamesView");
-$("#historyBackBtn").onclick=()=>showView("historyView");
-$("#playerHistoryBackBtn").onclick=()=>{showView("gameHistoryView");renderGameHistory();};
-$("#undoBtn").onclick=undo;
-$("#nextRoundBtn").onclick=nextRound;
-$("#finishGameBtn").onclick=finishGame;
-$("#historyBtn").onclick=()=>{currentHistoryGameId=currentGameId;showView("gameHistoryView");renderGameHistory();};
-$("#orderBtn").onclick=openOrder;
-$("#gameMenuBtn").onclick=gameMenu;
-$("#syncBtn").onclick=loadAll;
-$("#deleteGameHistoryBtn").onclick=()=>deleteHistory(currentHistoryGameId);
-$$(".nav").forEach(n=>n.onclick=()=>showView(n.dataset.view));
-$$(".segmented button").forEach(b=>b.onclick=()=>{$$(".segmented button").forEach(x=>x.classList.remove("active"));b.classList.add("active");currentFilter=b.dataset.filter;renderGames();});
-$$("[data-theme-choice]").forEach(b=>b.onclick=()=>saveTheme(b.dataset.themeChoice));
+function render() {
+  document.querySelectorAll(".nav-item").forEach(b => b.classList.toggle("active", b.dataset.tab === state.tab));
+  if (state.tab === "games") { setTitle("Games"); renderGames(); }
+  if (state.tab === "players") { setTitle("Players"); renderPlayers(); }
+  if (state.tab === "history") { setTitle("History"); renderHistory(); }
+  if (state.tab === "settings") { setTitle("Settings"); renderSettings(); }
+}
 
-applyTheme();
+function renderGames() {
+  const presets = ["UnderCut", "Lavaa", "Dingu", "Hukun kaalaa"];
+  $("#content").innerHTML = `
+    <div class="row page-intro">
+      <div><h2>Your Games</h2><p>${state.games.length} saved game${state.games.length === 1 ? "" : "s"}</p></div>
+      <button class="btn primary" onclick="newGame()">+ New Game</button>
+    </div>
+    <div class="section-title">Game types</div>
+    <div class="game-types">
+      ${presets.map((name, i) => `
+        <button class="preset-card ${i === 0 ? "featured" : ""}" onclick="newGame('${esc(name)}')">
+          <span class="preset-icon">🎮</span>
+          <span><b>${esc(name)}</b><small>${name === "UnderCut" ? "Ready to play" : "Scoring coming later"}</small></span>
+          <span class="preset-arrow">›</span>
+        </button>`).join("")}
+    </div>
+    <div class="section-title">Saved games</div>
+    <div class="stack">
+      ${state.games.length ? state.games.map(g => `
+        <button class="card game-card" style="text-align:left" onclick="openGame('${g.id}')">
+          <div class="row">
+            <div class="row" style="justify-content:flex-start">
+              <div class="game-icon">🎮</div>
+              <div><h3>${esc(g.name)}</h3><div class="game-meta">${g.status === "completed" ? "Completed" : "Active"} · Round ${g.round}</div></div>
+            </div>
+            <span class="chevron">›</span>
+          </div>
+        </button>`).join("") : `<div class="card empty">No saved games yet.<br>Choose a game type above to start.</div>`}
+    </div>`;
+}
+
+function renderPlayers() {
+  $("#content").innerHTML = `
+    <div class="row page-intro"><div><h2>Players</h2><p>Reusable across any game</p></div><button class="btn primary" onclick="newPlayer()">+ Add</button></div>
+    <div class="stack">
+      ${state.players.length ? state.players.map(p => `
+        <div class="card row">
+          <div class="row" style="justify-content:flex-start">${avatar(p)}<div><div class="player-name">${esc(p.name)}</div></div></div>
+          <div class="actions"><button class="btn small" onclick="editPlayer('${p.id}')">Edit</button><button class="btn small danger" onclick="deletePlayer('${p.id}')">Delete</button></div>
+        </div>`).join("") : `<div class="card empty">No players yet.</div>`}
+    </div>`;
+}
+
+async function renderHistory() {
+  const ids = state.games.map(g => g.id);
+  if (!ids.length) { $("#content").innerHTML = `<div class="card empty">No game history yet.</div>`; return; }
+  const { data, error } = await sb.from("score_changes").select("*, players(name)").in("game_id", ids).order("created_at", { ascending: false });
+  if (error) { toast(error.message); return; }
+  const by = {}; (data || []).forEach(x => (by[x.game_id] ??= []).push(x));
+  $("#content").innerHTML = `
+    <div class="page-intro"><h2>All Game History</h2><p>Choose a game to see each player's history.</p></div>
+    <div class="stack">
+      ${state.games.map(g => `
+        <button class="card row history-game" style="text-align:left" onclick="historyGame('${g.id}')">
+          <div class="row" style="justify-content:flex-start"><div class="game-icon">🎮</div><div><h3>${esc(g.name)}</h3><div class="game-meta">${(by[g.id] || []).length} score change${(by[g.id] || []).length === 1 ? "" : "s"} · Round ${g.round}</div></div></div><span class="chevron">›</span>
+        </button>`).join("")}
+    </div>`;
+}
+
+function renderSettings() {
+  $("#content").innerHTML = `
+    <div class="stack">
+      <div class="card settings-card"><h2>Appearance</h2><p>Use the classic light style or the bluish dark style.</p>
+        <button class="btn" onclick="toggleTheme()">Current: ${state.theme === "dark" ? "Dark" : "Light"} mode</button>
+      </div>
+      <div class="card settings-card">
+        <h2>UnderCut</h2>
+        <p>Change the points used by the UnderCut action. Defaults are 60 points awarded to the player who undercuts and 10 points deducted from the lowest player(s).</p>
+        <div class="setting-row"><label for="undercutAward">Undercut points</label><input id="undercutAward" class="input setting-input" type="number" min="0" step="1" value="${state.undercutSettings.undercutAward}"></div>
+        <div class="setting-row"><label for="undercutPenalty">Lowest player deduction</label><input id="undercutPenalty" class="input setting-input" type="number" min="0" step="1" value="${state.undercutSettings.undercutPenalty}"></div>
+        <button class="btn primary" onclick="saveUndercutSettingUI()">Save UnderCut settings</button>
+      </div>
+      <div class="card settings-card"><h2>Scoring</h2><p>For the general scorekeeper, tap a player and enter any amount. The other game types are listed now and their scoring systems can be added later.</p></div>
+    </div>`;
+}
+
+async function saveUndercutSettingUI() {
+  const award = Math.max(0, Math.trunc(Number($("#undercutAward").value)));
+  const penalty = Math.max(0, Math.trunc(Number($("#undercutPenalty").value)));
+  if (!Number.isFinite(award) || !Number.isFinite(penalty)) { toast("Enter valid points"); return; }
+  state.undercutSettings = { undercutAward: award, undercutPenalty: penalty };
+  saveUndercutSettings();
+  toast("UnderCut settings saved");
+}
+
+async function newPlayer() {
+  const name = prompt("Player name");
+  if (!name?.trim()) return;
+  const { error } = await sb.from("players").insert({ name: name.trim() });
+  if (error) toast(error.message); else { toast("Player added"); await loadAll(); }
+}
+async function editPlayer(id) {
+  const p = state.players.find(x => x.id === id); if (!p) return;
+  const name = prompt("Player name", p.name); if (!name?.trim()) return;
+  const { error } = await sb.from("players").update({ name: name.trim() }).eq("id", id);
+  if (error) toast(error.message); else loadAll();
+}
+async function deletePlayer(id) {
+  if (!confirm("Delete this player? Their player record and game links will be removed.")) return;
+  const { error } = await sb.from("players").delete().eq("id", id);
+  if (error) toast(error.message); else loadAll();
+}
+
+function newGame(preset = "") {
+  const selectedPreset = preset || "UnderCut";
+  showModal(`
+    <h2>New Game</h2>
+    <div class="game-choice-grid">
+      ${["UnderCut", "Lavaa", "Dingu", "Hukun kaalaa"].map(name => `<button class="game-choice ${name === selectedPreset ? "selected" : ""}" onclick="selectGamePreset('${esc(name)}')"><span>🎮</span><b>${esc(name)}</b><small>${name === "UnderCut" ? "Scoring ready" : "Coming later"}</small></button>`).join("")}
+    </div>
+    <input id="gameName" class="input" placeholder="Game name" value="${esc(selectedPreset)}">
+    <div class="section-title">Choose players</div>
+    <div class="stack" id="playerChoices">${state.players.map(p => `<label class="card row choice-row"><span class="row" style="justify-content:flex-start"><input type="checkbox" value="${p.id}"> ${esc(p.name)}</span></label>`).join("") || `<div class="notice">Add players first from the Players tab.</div>`}</div>
+    <div class="actions" style="margin-top:15px"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="createGame()">Create Game</button></div>`);
+}
+function selectGamePreset(name) {
+  $("#gameName").value = name;
+  document.querySelectorAll(".game-choice").forEach(b => b.classList.toggle("selected", b.textContent.includes(name)));
+}
+async function createGame() {
+  const name = $("#gameName").value.trim() || "Card Game";
+  const selected = [...document.querySelectorAll("#playerChoices input:checked")].map(x => x.value);
+  if (!selected.length) { toast("Choose at least one player"); return; }
+  const { data: g, error } = await sb.from("games").insert({ name, sort_mode: "custom" }).select().single();
+  if (error) { toast(error.message); return; }
+  const rows = selected.map((pid, i) => ({ game_id: g.id, player_id: pid, score: 0, player_order: i }));
+  const { error: e } = await sb.from("game_players").insert(rows);
+  if (e) { toast(e.message); return; }
+  closeModal(); await loadAll(); openGame(g.id);
+}
+
+async function openGame(id) {
+  const { data: g, error: ge } = await sb.from("games").select("*").eq("id", id).single();
+  const { data: gp, error: pe } = await sb.from("game_players").select("*, players(*)").eq("game_id", id).order("player_order");
+  if (ge || pe || !g || !gp) { toast("Could not load game"); return; }
+  state.game = g; state.gamePlayers = gp; state.sortMode = g.sort_mode || "custom";
+  await loadGameHistory();
+  renderGame();
+}
+async function loadGameHistory() {
+  const { data, error } = await sb.from("score_changes").select("*, players(name)").eq("game_id", state.game.id).order("created_at", { ascending: false });
+  if (error) { toast(error.message); state.history = []; return; }
+  state.history = data || [];
+}
+function orderedPlayers() {
+  const arr = [...state.gamePlayers];
+  if (state.sortMode === "highest") return arr.sort((a, b) => b.score - a.score);
+  if (state.sortMode === "lowest") return arr.sort((a, b) => a.score - b.score);
+  return arr.sort((a, b) => a.player_order - b.player_order);
+}
+
+function renderGame() {
+  setTitle(state.game.name);
+  const ps = orderedPlayers();
+  const undercut = isUnderCutGame();
+  $("#content").innerHTML = `
+    <div class="game-header">
+      <button class="btn small" onclick="goGames()">‹ Games</button>
+      <div class="game-title-center"><h2>${esc(state.game.name)}</h2><div class="game-meta">Round ${state.game.round}</div></div>
+      <button class="btn small" onclick="gameMenu()">•••</button>
+    </div>
+    ${!undercut && state.game.name !== "Lavaa" && state.game.name !== "Dingu" && state.game.name !== "Hukun kaalaa" ? `<div class="notice" style="margin-bottom:12px">General scorekeeper mode. Tap a player to enter any score.</div>` : ""}
+    ${undercut ? `<div class="notice undercut-notice"><b>UnderCut</b> scoring is active. Tap a player for scoring options.</div>` : state.game.name !== "UnderCut" ? `<div class="notice" style="margin-bottom:12px"><b>${esc(state.game.name)}</b> is ready as a game slot. Its scoring system will be added later.</div>` : ""}
+    <div class="player-list">
+      ${ps.map(gp => `
+        <button class="simple-player" onclick="scorePlayer('${gp.player_id}')">
+          ${avatar(gp.players)}
+          <div class="simple-player-main"><div class="player-name">${esc(gp.players.name)}</div><div class="player-sub">Round ${state.game.round}${gp.last_delta != null ? ` · Last ${gp.last_delta >= 0 ? "+" : ""}${gp.last_delta}` : ""}</div></div>
+          <div class="score-big">${gp.score}</div><span class="chevron">›</span>
+        </button>`).join("")}
+    </div>
+    ${!undercut ? `<div class="section-title">Quick score</div><div class="quick"><button onclick="quickScore(5)">+5</button><button onclick="quickScore(10)">+10</button><button onclick="quickScore(-5)">−5</button></div>` : ""}
+    <div class="actions game-actions">
+      <button class="btn" onclick="undo()">↶ Undo</button>
+      <button class="btn" onclick="historyGame('${state.game.id}')">History</button>
+      <button class="btn primary" style="flex:1" onclick="nextRound()">Next Round</button>
+    </div>
+    ${state.game.status === "active" ? `<button class="btn finish-btn" onclick="finishGame()">Finish Game</button>` : `<div class="notice">This game is finished. You can still view its history.</div>`}`;
+}
+
+let selectedPlayerId = null;
+let scoreMode = 1;
+function scorePlayer(pid) {
+  selectedPlayerId = pid;
+  scoreMode = 1;
+  const p = state.gamePlayers.find(x => x.player_id === pid)?.players;
+  if (!p) return;
+  showModal(`
+    <div class="player-modal-head">${avatar(p)}<div><h2>${esc(p.name)}</h2><div class="game-meta">Round ${state.game.round} · Total ${state.gamePlayers.find(x => x.player_id === pid).score}</div></div></div>
+    <div class="score-display" id="scoreDisplay">0</div>
+    <div class="score-entry-head"><button class="score-link" onclick="undo()">↶ Undo</button><button class="score-link" onclick="redoLast()">Redo</button></div>
+    <input id="scoreAmount" class="score-key-input" type="number" inputmode="numeric" placeholder="0" autocomplete="off">
+    <div class="score-mode"><button id="addMode" class="selected" onclick="setScoreMode(1)">＋</button><button id="subMode" onclick="setScoreMode(-1)">−</button></div>
+    ${isUnderCutGame() ? `<button class="undercut-action" onclick="startUndercut('${pid}')"><span>✦</span><b>Undercut</b><small>+${state.undercutSettings.undercutAward} points</small></button>` : ""}
+    <div class="actions" style="margin-top:14px"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveScore()">Add Score</button></div>`);
+  const input = $("#scoreAmount");
+  input.addEventListener("input", () => { $("#scoreDisplay").textContent = input.value || "0"; });
+  input.focus();
+}
+function setScoreMode(m) { scoreMode = m; $("#addMode").classList.toggle("selected", m === 1); $("#subMode").classList.toggle("selected", m === -1); }
+
+async function applyDelta(pid, delta) {
+  const gp = state.gamePlayers.find(x => x.player_id === pid);
+  if (!gp || !delta) return false;
+  const { error: e } = await sb.from("score_changes").insert({ game_id: state.game.id, player_id: pid, round: state.game.round, delta });
+  if (e) { toast(e.message); return false; }
+  const { error: u } = await sb.from("game_players").update({ score: gp.score + delta }).eq("id", gp.id);
+  if (u) { toast(u.message); return false; }
+  return true;
+}
+async function saveScore() {
+  const amount = Number($("#scoreAmount").value);
+  if (!Number.isFinite(amount)) { toast("Enter a score"); return; }
+  const delta = Math.trunc(amount) * scoreMode;
+  if (!delta) { toast("Enter a score other than 0"); return; }
+  if (!(await applyDelta(selectedPlayerId, delta))) return;
+  await sb.from("games").update({ updated_at: new Date().toISOString() }).eq("id", state.game.id);
+  closeModal(); await openGame(state.game.id); toast(delta >= 0 ? `+${delta}` : `${delta}`);
+}
+async function quickScore(delta) {
+  if (!selectedPlayerId) { toast("Tap a player first"); return; }
+  if (!(await applyDelta(selectedPlayerId, delta))) return;
+  await openGame(state.game.id);
+}
+
+function startUndercut(pid) {
+  if (!isUnderCutGame()) return;
+  closeModal();
+  const candidates = state.gamePlayers.filter(gp => gp.player_id !== pid);
+  showModal(`
+    <div class="undercut-modal">
+      <div class="undercut-symbol">✦</div>
+      <h2>Undercut</h2>
+      <p class="question">Who has the lowest?</p>
+      <p>Select one or more players. Each selected player receives −${state.undercutSettings.undercutPenalty} points.</p>
+      <div class="lowest-grid" id="lowestGrid">
+        ${candidates.map(gp => `<button class="lowest-player" data-pid="${gp.player_id}" onclick="toggleLowest(this)">${avatar(gp.players)}<span>${esc(gp.players.name)}</span></button>`).join("")}
+      </div>
+      <div class="undercut-summary">${esc(state.gamePlayers.find(x => x.player_id === pid).players.name)} receives <b>+${state.undercutSettings.undercutAward}</b></div>
+      <div class="actions"><button class="btn" onclick="scorePlayer('${pid}')">Back</button><button class="btn primary" onclick="confirmUndercut('${pid}')">Apply Undercut</button></div>
+    </div>`);
+}
+function toggleLowest(btn) { btn.classList.toggle("selected"); }
+async function confirmUndercut(pid) {
+  const selected = [...document.querySelectorAll(".lowest-player.selected")].map(x => x.dataset.pid);
+  if (!selected.length) { toast("Choose who has the lowest"); return; }
+  const award = state.undercutSettings.undercutAward;
+  const penalty = state.undercutSettings.undercutPenalty;
+  closeModal();
+  if (!(await applyDelta(pid, award))) return;
+  for (const lowPid of selected) {
+    if (!(await applyDelta(lowPid, -penalty))) return;
+  }
+  await sb.from("games").update({ updated_at: new Date().toISOString() }).eq("id", state.game.id);
+  await openGame(state.game.id);
+  celebrate(`UNDERCUT +${award}`);
+}
+
+async function undo() {
+  const last = state.history[0]; if (!last) { toast("Nothing to undo"); return; }
+  const gp = state.gamePlayers.find(x => x.player_id === last.player_id); if (!gp) return;
+  await sb.from("game_players").update({ score: gp.score - last.delta }).eq("id", gp.id);
+  await sb.from("score_changes").delete().eq("id", last.id);
+  await openGame(state.game.id); toast("Undone");
+}
+async function redoLast() { toast("Redo is available after an undo in a future update"); }
+async function nextRound() {
+  if (state.game.status === "completed") return;
+  await sb.from("games").update({ round: state.game.round + 1, updated_at: new Date().toISOString() }).eq("id", state.game.id);
+  await openGame(state.game.id);
+  celebrate("ROUND " + state.game.round);
+}
+async function finishGame() {
+  const ps = orderedPlayers(); if (!ps.length) return;
+  const sorted = [...ps].sort((a, b) => b.score - a.score);
+  const winner = sorted[0];
+  await sb.from("games").update({ status: "completed", updated_at: new Date().toISOString() }).eq("id", state.game.id);
+  state.game.status = "completed";
+  showWinners(sorted, winner);
+}
+function showWinners(sorted, winner) {
+  showModal(`<div class="winner"><div class="trophy">🏆</div><div class="winner-kicker">GAME OVER</div><div class="winner-label">Winner</div><div class="winner-name">${esc(winner.players.name)}</div><div class="score-big winner-score">${winner.score}</div><div class="podium">${sorted.slice(0, 3).map((p, i) => `<div class="card"><div class="place">${["1ST", "2ND", "3RD"][i]}</div>${avatar(p.players)}<div class="player-name" style="margin-top:8px">${esc(p.players.name)}</div><div class="score">${p.score}</div></div>`).join("")}</div><div class="actions" style="margin-top:18px"><button class="btn primary" onclick="closeModal();renderGame()">Return to Game</button><button class="btn" onclick="goGames()">Games</button></div></div>`);
+}
+function gameMenu() {
+  showModal(`<h2>${esc(state.game.name)}</h2><div class="stack"><button class="btn" onclick="sortPlayers()">Choose player order</button><button class="btn" onclick="renameGame()">Rename game</button><button class="btn" onclick="historyGame('${state.game.id}')">Game history</button><button class="btn danger" onclick="deleteGame('${state.game.id}')">Delete game</button><button class="btn" onclick="closeModal()">Cancel</button></div>`);
+}
+function sortPlayers() {
+  showModal(`<h2>Player order</h2><div class="stack"><button class="btn" onclick="setSort('custom')">Custom order</button><button class="btn" onclick="setSort('highest')">Highest score first</button><button class="btn" onclick="setSort('lowest')">Lowest score first</button><button class="btn" onclick="customOrder()">Edit custom order</button></div>`);
+}
+async function setSort(mode) {
+  await sb.from("games").update({ sort_mode: mode }).eq("id", state.game.id);
+  state.sortMode = mode; state.game.sort_mode = mode; closeModal(); renderGame();
+}
+function customOrder() {
+  const rows = [...state.gamePlayers].sort((a, b) => a.player_order - b.player_order);
+  showModal(`<h2>Custom order</h2><div class="order-list">${rows.map((gp, i) => `<div class="order-row"><b>${i + 1}</b><span>${esc(gp.players.name)}</span><span class="actions"><button class="btn small" onclick="movePlayer('${gp.id}',-1)">↑</button><button class="btn small" onclick="movePlayer('${gp.id}',1)">↓</button></span></div>`).join("")}</div><button class="btn primary" style="width:100%;margin-top:15px" onclick="setSort('custom')">Done</button>`);
+}
+async function movePlayer(id, dir) {
+  const rows = [...state.gamePlayers].sort((a, b) => a.player_order - b.player_order);
+  const i = rows.findIndex(x => x.id === id), j = i + dir;
+  if (i < 0 || j < 0 || j >= rows.length) return;
+  [rows[i].player_order, rows[j].player_order] = [rows[j].player_order, rows[i].player_order];
+  for (const r of rows) await sb.from("game_players").update({ player_order: r.player_order }).eq("id", r.id);
+  await openGame(state.game.id); customOrder();
+}
+async function renameGame() {
+  const n = prompt("Game name", state.game.name); if (!n?.trim()) return;
+  await sb.from("games").update({ name: n.trim(), updated_at: new Date().toISOString() }).eq("id", state.game.id);
+  closeModal(); await loadAll(); openGame(state.game.id);
+}
+async function deleteGame(id) {
+  if (!confirm("Delete this game and all its score history?")) return;
+  const { error } = await sb.from("games").delete().eq("id", id);
+  if (error) toast(error.message); else { closeModal(); state.game = null; await loadAll(); }
+}
+async function historyGame(id) {
+  const g = state.games.find(x => x.id === id) || (state.game?.id === id ? state.game : null); if (!g) return;
+  const { data, error } = await sb.from("score_changes").select("*, players(name)").eq("game_id", id).order("created_at", { ascending: false });
+  if (error) { toast(error.message); return; }
+  const groups = {}; (data || []).forEach(x => (groups[x.player_id] ??= []).push(x));
+  closeModal();
+  showModal(`<h2>${esc(g.name)} History</h2><div class="stack">${Object.entries(groups).length ? Object.entries(groups).map(([pid, arr]) => `<button class="card row" style="text-align:left" onclick="playerHistory('${id}','${pid}')"><div><h3>${esc(arr[0].players?.name || "Player")}</h3><div class="game-meta">${arr.length} changes</div></div><span class="chevron">›</span></button>`).join("") : `<div class="empty">No score history.</div>`}</div><div class="actions" style="margin-top:14px"><button class="btn danger" onclick="deleteGameHistory('${id}')">Delete history</button><button class="btn" onclick="closeModal()">Close</button></div>`);
+}
+async function playerHistory(gid, pid) {
+  const { data } = await sb.from("score_changes").select("*, players(name)").eq("game_id", gid).eq("player_id", pid).order("created_at", { ascending: false });
+  const p = data?.[0]?.players?.name || "Player";
+  let running = 0;
+  const chronological = [...(data || [])].reverse().map(x => { running += x.delta; return { ...x, running }; }).reverse();
+  showModal(`<h2>${esc(p)} History</h2><div class="stack">${chronological.length ? chronological.map(x => `<div class="history-item row"><div><b>Round ${x.round}</b><div class="game-meta">${new Date(x.created_at).toLocaleString()}</div></div><div style="text-align:right"><div class="delta ${x.delta >= 0 ? "pos" : "neg"}">${x.delta >= 0 ? "+" : ""}${x.delta}</div><div class="game-meta">Total ${x.running}</div></div></div>`).join("") : `<div class="empty">No history.</div>`}</div><button class="btn" style="width:100%;margin-top:14px" onclick="historyGame('${gid}')">Back to game history</button>`);
+}
+async function deleteGameHistory(gid) {
+  if (!confirm("Delete all score history for this game? The current scores will remain.")) return;
+  const { error } = await sb.from("score_changes").delete().eq("game_id", gid);
+  if (error) toast(error.message); else { toast("History deleted"); historyGame(gid); }
+}
+function goGames() { closeModal(); state.tab = "games"; render(); }
+function showModal(html) { $("#modalRoot").innerHTML = `<div class="modal-backdrop" onclick="if(event.target===this)closeModal()"><div class="modal">${html}</div></div>`; }
+function closeModal() { $("#modalRoot").innerHTML = ""; }
+function celebrate(text) { const el = document.createElement("div"); el.className = "celebrate"; el.textContent = "✓ " + text; document.body.appendChild(el); setTimeout(() => el.remove(), 1300); }
+function toggleTheme() { state.theme = state.theme === "dark" ? "light" : "dark"; localStorage.setItem("score_theme", state.theme); document.documentElement.dataset.theme = state.theme; render(); }
+
+document.querySelectorAll(".nav-item").forEach(b => b.addEventListener("click", () => { closeModal(); state.tab = b.dataset.tab; render(); }));
+$("#themeBtn").addEventListener("click", toggleTheme);
+
+const style = document.createElement("style");
+style.textContent = `.celebrate{position:fixed;left:50%;top:42%;transform:translate(-50%,-50%) scale(.7);z-index:100;background:var(--accent);color:white;padding:18px 28px;border-radius:18px;font-size:22px;font-weight:900;box-shadow:0 12px 40px rgba(0,0,0,.25);animation:celebrate 1.25s ease both}@keyframes celebrate{0%{opacity:0;transform:translate(-50%,-50%) scale(.6)}25%{opacity:1;transform:translate(-50%,-50%) scale(1.08)}70%{transform:translate(-50%,-50%) scale(1)}100%{opacity:0;transform:translate(-50%,-70%) scale(1)}}`;
+document.head.appendChild(style);
 loadAll();

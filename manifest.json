@@ -1,8 +1,9 @@
 {
-  "name":"ScoreMate Classic Scorekeeper",
-  "short_name":"ScoreMate",
-  "start_url":".",
-  "display":"standalone",
-  "background_color":"#171717",
-  "theme_color":"#171717"
+  "name": "Scorekeeper",
+  "short_name": "Scorekeeper",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#0b1423",
+  "theme_color": "#0b1423",
+  "icons": []
 }

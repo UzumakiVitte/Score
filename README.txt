@@ -24,3 +24,7 @@ CURRENT GAME FEATURES
 - Finished games move to History
 - Add existing or new players to an ongoing game
 - Player photos, emojis and built-in avatars
+
+
+VERSION 1.0.3
+The login screen uses username + password only. If Safari autofills an old email, the username field is explicitly configured not to use email autocomplete. The app also uses renamed v3 JS/CSS files to reduce GitHub Pages cache issues.

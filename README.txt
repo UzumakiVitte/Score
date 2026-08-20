@@ -26,5 +26,20 @@ CURRENT GAME FEATURES
 - Player photos, emojis and built-in avatars
 
 
-VERSION 1.0.3
-The login screen uses username + password only. If Safari autofills an old email, the username field is explicitly configured not to use email autocomplete. The app also uses renamed v3 JS/CSS files to reduce GitHub Pages cache issues.
+VERSION 1.0.4
+Username login is fixed. The previous build used the reserved .invalid domain for Supabase's internal email mapping, which Supabase rejects. This build uses a syntactically valid private synthetic address at @scorekeeper.app.
+
+Users still enter only:
+- Username
+- Password
+
+No email address is shown or required.
+
+SUPABASE SETUP
+1. Run schema.sql in Supabase SQL Editor.
+2. In Supabase Dashboard, Authentication > Providers > Email, turn OFF Confirm email.
+3. If you already attempted to create an account with the old build, try the same username again after uploading this build. The old failed signup should not have created an account.
+4. Upload the updated files to GitHub Pages.
+
+PRIVACY
+RLS policies use auth.uid() and owner_id. Each account can only read and change its own games, players, game-player links and score history.

@@ -2,6 +2,8 @@
 -- Run after the original Scorekeeper schema.
 -- IMPORTANT: In Supabase Dashboard, Authentication > Providers > Email, turn OFF
 -- "Confirm email" because the app presents username + password and does not expose email.
+-- The app maps each username to a private synthetic address at scorekeeper.app.
+-- Users never see or enter that synthetic address.
 
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
@@ -69,3 +71,12 @@ for each row execute procedure public.handle_new_user();
 -- New accounts can only see rows they own. Any old rows with NULL owner_id are intentionally
 -- hidden after this migration. If you need to keep an old game, create/login to your account
 -- first, then we can provide a one-time migration query to assign those legacy rows.
+
+
+-- Keep usernames normalized and valid for the app.
+alter table public.profiles
+  drop constraint if exists profiles_username_format;
+
+alter table public.profiles
+  add constraint profiles_username_format
+  check (username = lower(username) and username ~ '^[a-z0-9_]{3,24}$');

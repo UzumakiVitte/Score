@@ -30,7 +30,9 @@ function isUnderCutGame() {
   return state.game && String(state.game.name).trim().toLowerCase() === "undercut";
 }
 function avatar(p) {
-  if (p?.avatar_url) return `<img class="avatar" src="${esc(p.avatar_url)}" alt="">`;
+  const value = p?.avatar_url || "";
+  if (value.startsWith("emoji:")) return `<div class="avatar avatar-emoji">${esc(value.slice(6))}</div>`;
+  if (value) return `<img class="avatar" src="${esc(value)}" alt="">`;
   return `<div class="avatar">${esc((p?.name || "?").slice(0, 1).toUpperCase())}</div>`;
 }
 function setTitle(t) { $("#pageTitle").textContent = t; }
@@ -140,18 +142,75 @@ async function saveUndercutSettingUI() {
   toast("UnderCut settings saved");
 }
 
-async function newPlayer() {
-  const name = prompt("Player name");
-  if (!name?.trim()) return;
-  const { error } = await sb.from("players").insert({ name: name.trim() });
-  if (error) toast(error.message); else { toast("Player added"); await loadAll(); }
+let playerAvatarDraft = "";
+
+function newPlayer() {
+  playerAvatarDraft = "";
+  showPlayerEditor(null);
 }
+
+function showPlayerEditor(existing) {
+  const p = existing;
+  showModal(`
+    <h2>${p ? "Edit Player" : "Add Player"}</h2>
+    <div class="player-preview" id="playerPreview">${avatar(p || { name: "Player", avatar_url: playerAvatarDraft })}</div>
+    <input id="playerName" class="input" placeholder="Player name" value="${esc(p?.name || "")}">
+    <div class="avatar-section-title">Picture</div>
+    <label class="btn avatar-upload"><span>📷 Choose picture</span><input id="playerPhoto" type="file" accept="image/*" onchange="handleAvatarFile(this)"></label>
+    <div class="avatar-section-title">Emoji</div>
+    <div class="emoji-grid">${["😀","😎","🤠","🥳","🤓","🧑","👨","👩","🧔","🧑‍🎤","🦊","🐼","🐯","🐸","🐵","🐨"].map(e => `<button class="emoji-choice" type="button" onclick="choosePlayerEmoji('${e}')">${e}</button>`).join("")}</div>
+    <div class="actions" style="margin-top:16px"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="savePlayer(${p ? `'${p.id}'` : "null"})">${p ? "Save changes" : "Add Player"}</button></div>`);
+}
+
+function choosePlayerEmoji(emoji) {
+  playerAvatarDraft = "emoji:" + emoji;
+  const name = $("#playerName")?.value || "Player";
+  $("#playerPreview").innerHTML = avatar({ name, avatar_url: playerAvatarDraft });
+}
+
+function handleAvatarFile(input) {
+  const file = input.files?.[0];
+  if (!file) return;
+  if (!file.type.startsWith("image/")) { toast("Choose an image"); return; }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const size = 256;
+      const scale = Math.min(size / img.width, size / img.height, 1);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(img.width * scale));
+      canvas.height = Math.max(1, Math.round(img.height * scale));
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      playerAvatarDraft = canvas.toDataURL("image/jpeg", 0.78);
+      const name = $("#playerName")?.value || "Player";
+      $("#playerPreview").innerHTML = avatar({ name, avatar_url: playerAvatarDraft });
+    };
+    img.src = reader.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+async function savePlayer(id) {
+  const name = $("#playerName")?.value.trim();
+  if (!name) { toast("Enter a player name"); return; }
+  const payload = { name, avatar_url: playerAvatarDraft || null };
+  const result = id
+    ? await sb.from("players").update(payload).eq("id", id)
+    : await sb.from("players").insert(payload);
+  if (result.error) { toast(result.error.message); return; }
+  closeModal();
+  toast(id ? "Player updated" : "Player added");
+  await loadAll();
+}
+
 async function editPlayer(id) {
   const p = state.players.find(x => x.id === id); if (!p) return;
-  const name = prompt("Player name", p.name); if (!name?.trim()) return;
-  const { error } = await sb.from("players").update({ name: name.trim() }).eq("id", id);
-  if (error) toast(error.message); else loadAll();
+  playerAvatarDraft = p.avatar_url || "";
+  showPlayerEditor(p);
 }
+
 async function deletePlayer(id) {
   if (!confirm("Delete this player? Their player record and game links will be removed.")) return;
   const { error } = await sb.from("players").delete().eq("id", id);
@@ -206,13 +265,20 @@ function orderedPlayers() {
   return arr.sort((a, b) => a.player_order - b.player_order);
 }
 
-function previousRoundLabel(pid) {
-  const previousRound = Number(state.game.round) - 1;
-  if (previousRound < 1) return `Round ${state.game.round}`;
-  const roundScore = state.history
-    .filter(x => x.player_id === pid && Number(x.round) === previousRound)
+function roundScore(pid, round = state.game.round) {
+  return state.history
+    .filter(x => x.player_id === pid && Number(x.round) === Number(round))
     .reduce((sum, x) => sum + Number(x.delta || 0), 0);
-  return `Round ${previousRound}: ${roundScore}`;
+}
+function playerRoundLabel(pid) {
+  const current = roundScore(pid, state.game.round);
+  if (state.game.round > 1) {
+    const previous = roundScore(pid, Number(state.game.round) - 1);
+    return current !== 0 || state.history.some(x => x.player_id === pid && Number(x.round) === Number(state.game.round))
+      ? `This round: ${current}`
+      : `Round ${Number(state.game.round) - 1}: ${previous}`;
+  }
+  return `This round: ${current}`;
 }
 
 function renderGame() {
@@ -225,17 +291,14 @@ function renderGame() {
       <div class="game-title-center"><h2>${esc(state.game.name)}</h2><div class="game-meta">Round ${state.game.round}</div></div>
       <button class="btn small" onclick="gameMenu()">•••</button>
     </div>
-    ${!undercut && state.game.name !== "Lavaa" && state.game.name !== "Dingu" && state.game.name !== "Hukun kaalaa" ? `<div class="notice" style="margin-bottom:12px">General scorekeeper mode. Tap a player to enter any score.</div>` : ""}
-    ${undercut ? `<div class="notice undercut-notice"><b>UnderCut</b> scoring is active. Tap a player for scoring options.</div>` : state.game.name !== "UnderCut" ? `<div class="notice" style="margin-bottom:12px"><b>${esc(state.game.name)}</b> is ready as a game slot. Its scoring system will be added later.</div>` : ""}
     <div class="player-list">
       ${ps.map(gp => `
         <button class="simple-player" onclick="scorePlayer('${gp.player_id}')">
           ${avatar(gp.players)}
-          <div class="simple-player-main"><div class="player-name">${esc(gp.players.name)}</div><div class="player-sub">${previousRoundLabel(gp.player_id)}</div></div>
+          <div class="simple-player-main"><div class="player-name">${esc(gp.players.name)}</div><div class="player-sub">${playerRoundLabel(gp.player_id)}</div></div>
           <div class="score-big">${gp.score}</div><span class="chevron">›</span>
         </button>`).join("")}
     </div>
-    ${!undercut ? `<div class="section-title">Quick score</div><div class="quick"><button onclick="quickScore(5)">+5</button><button onclick="quickScore(10)">+10</button><button onclick="quickScore(-5)">−5</button></div>` : ""}
     <div class="actions game-actions">
       <button class="btn" onclick="undo()">↶ Undo</button>
       <button class="btn" onclick="historyGame('${state.game.id}')">History</button>
@@ -254,7 +317,7 @@ function scorePlayer(pid) {
 
   showModal(`
     <div class="player-modal-head">${avatar(p)}<div><h2>${esc(p.name)}</h2><div class="game-meta">Round ${state.game.round} · Total ${gp.score}</div></div></div>
-    <div class="score-display" id="scoreDisplay">0</div>
+    <div class="score-display" id="scoreDisplay">${roundScore(pid, state.game.round)}</div>
     <div class="score-entry-head"><button class="score-link" onclick="undo()">↶ Undo</button><button class="score-link" onclick="redoLast()">Redo</button></div>
     <input id="scoreAmount" class="score-key-input" type="number" inputmode="numeric" placeholder="0" autocomplete="off">
     <div class="score-mode">
@@ -273,7 +336,7 @@ function scorePlayer(pid) {
 
 async function applyDelta(pid, delta) {
   const gp = state.gamePlayers.find(x => x.player_id === pid);
-  if (!gp || !delta) return false;
+  if (!gp || !Number.isFinite(delta)) return false;
   const { error: e } = await sb.from("score_changes").insert({
     game_id: state.game.id,
     player_id: pid,
@@ -291,8 +354,6 @@ async function saveScore(direction) {
   const amount = Number(input?.value);
   if (!Number.isFinite(amount)) { toast("Enter a score"); return; }
   const wholeAmount = Math.trunc(Math.abs(amount));
-  if (!wholeAmount) { toast("Enter a score other than 0"); return; }
-
   const delta = wholeAmount * direction;
   if (!(await applyDelta(selectedPlayerId, delta))) return;
 
@@ -300,6 +361,19 @@ async function saveScore(direction) {
   closeModal();
   await openGame(state.game.id);
   toast(delta >= 0 ? `+${delta}` : `${delta}`);
+  await advanceIfRoundComplete();
+}
+
+async function advanceIfRoundComplete() {
+  if (state.game.status === "completed") return;
+  const round = Number(state.game.round);
+  const completedPlayers = new Set(
+    state.history
+      .filter(x => Number(x.round) === round)
+      .map(x => x.player_id)
+  );
+  if (completedPlayers.size < state.gamePlayers.length) return;
+  await nextRound(true);
 }
 
 async function quickScore(delta) {
@@ -349,11 +423,12 @@ async function undo() {
   await openGame(state.game.id); toast("Undone");
 }
 async function redoLast() { toast("Redo is available after an undo in a future update"); }
-async function nextRound() {
+async function nextRound(auto = false) {
   if (state.game.status === "completed") return;
-  await sb.from("games").update({ round: state.game.round + 1, updated_at: new Date().toISOString() }).eq("id", state.game.id);
+  const next = Number(state.game.round) + 1;
+  await sb.from("games").update({ round: next, updated_at: new Date().toISOString() }).eq("id", state.game.id);
   await openGame(state.game.id);
-  celebrate("ROUND " + state.game.round);
+  celebrate(auto ? `ROUND ${next}` : `ROUND ${next}`);
 }
 async function finishGame() {
   const ps = orderedPlayers(); if (!ps.length) return;

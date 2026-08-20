@@ -3,8 +3,11 @@ const sb = createClient(SCORE_CONFIG.SUPABASE_URL, SCORE_CONFIG.SUPABASE_PUBLISH
 
 const DEFAULT_SETTINGS = { undercutAward: 60, undercutPenalty: 10, roundWinnerPenalty: 10 };
 const state = {
+  session: null,
+  profile: null,
   tab: "games",
   games: [],
+  completedGames: [],
   players: [],
   game: null,
   gamePlayers: [],
@@ -37,14 +40,52 @@ function avatar(p) {
 }
 function setTitle(t) { $("#pageTitle").textContent = t; }
 
+function usernameEmail(username){ return username.trim().toLowerCase() + "@scorekeeper.invalid"; }
+function renderAuth(){
+  document.body.classList.add("auth-mode");
+  $("#app").innerHTML = `<div class="auth-wrap"><div class="auth-card"><div class="auth-logo">🎮</div><div class="eyebrow">CARD SCOREKEEPER</div><h1>Scorekeeper</h1><p id="authText">Sign in with your username and password.</p><input id="authUsername" class="input" autocomplete="username" placeholder="Username"><input id="authPassword" class="input" type="password" autocomplete="current-password" placeholder="Password"><button id="authAction" class="btn primary auth-submit" onclick="authSubmit()">Log in</button><button class="btn auth-switch" onclick="toggleAuthMode()" id="authSwitch">Create an account</button><div id="authMessage" class="auth-message"></div></div></div>`;
+  window.authSignup=false;
+}
+function toggleAuthMode(){ window.authSignup=!window.authSignup; $("#authText").textContent=window.authSignup?"Create your private Scorekeeper account.":"Sign in with your username and password."; $("#authAction").textContent=window.authSignup?"Create account":"Log in"; $("#authSwitch").textContent=window.authSignup?"I already have an account":"Create an account"; $("#authPassword").autocomplete=window.authSignup?"new-password":"current-password"; }
+async function authSubmit(){
+  const u=$("#authUsername").value.trim().toLowerCase(), p=$("#authPassword").value;
+  if(!/^[a-z0-9_]{3,24}$/.test(u)){ $("#authMessage").textContent="Use 3 to 24 letters, numbers, or underscores."; return; }
+  if(p.length<6){ $("#authMessage").textContent="Password must be at least 6 characters."; return; }
+  const email=usernameEmail(u); $("#authAction").disabled=true; $("#authMessage").textContent="Please wait…";
+  let result;
+  if(window.authSignup) result=await sb.auth.signUp({email,password:p,options:{data:{username:u}}});
+  else result=await sb.auth.signInWithPassword({email,password:p});
+  $("#authAction").disabled=false;
+  if(result.error){ $("#authMessage").textContent=result.error.message; return; }
+  if(window.authSignup && !result.data.session){ $("#authMessage").textContent="Account created. In Supabase, email confirmation must be disabled for username-only login."; return; }
+  state.session=result.data.session; await ensureProfile(u); await loadAll();
+}
+async function ensureProfile(username){
+  if(!state.session) return;
+  const {data}=await sb.from("profiles").select("*").eq("id",state.session.user.id).maybeSingle();
+  if(data){state.profile=data;return;}
+  const {data:created}=await sb.from("profiles").insert({id:state.session.user.id,username:username||state.session.user.user_metadata?.username||"user"}).select().single();
+  state.profile=created||null;
+}
+async function bootAuth(){
+  const {data}=await sb.auth.getSession();
+  state.session=data.session;
+  if(state.session){ await ensureProfile(state.session.user.user_metadata?.username); await loadAll(); }
+  else renderAuth();
+  sb.auth.onAuthStateChange(async (_event,session)=>{ state.session=session; if(session){ await ensureProfile(session.user.user_metadata?.username); await loadAll(); } else { state.profile=null; state.games=[]; state.completedGames=[]; state.players=[]; renderAuth(); } });
+}
+async function logout(){ await sb.auth.signOut(); }
 async function loadAll() {
+  if (!state.session) return renderAuth();
   const [g, p] = await Promise.all([
     sb.from("games").select("*").order("updated_at", { ascending: false }),
     sb.from("players").select("*").order("name")
   ]);
   if (g.error) return toast(g.error.message);
   if (p.error) return toast(p.error.message);
-  state.games = g.data || [];
+  const allGames = g.data || [];
+  state.games = allGames.filter(x => x.status !== "completed");
+  state.completedGames = allGames.filter(x => x.status === "completed");
   state.players = p.data || [];
   render();
 }
@@ -61,7 +102,7 @@ function renderGames() {
   const presets = ["UnderCut", "Lavaa", "Dingu", "Hukun kaalaa"];
   $("#content").innerHTML = `
     <div class="row page-intro">
-      <div><h2>Your Games</h2><p>${state.games.length} saved game${state.games.length === 1 ? "" : "s"}</p></div>
+      <div><h2>Your Games</h2><p>${state.games.length} ongoing game${state.games.length === 1 ? "" : "s"}</p></div>
       <button class="btn primary" onclick="newGame()">+ New Game</button>
     </div>
     <div class="section-title">Game types</div>
@@ -80,7 +121,7 @@ function renderGames() {
           <div class="row">
             <div class="row" style="justify-content:flex-start">
               <div class="game-icon">🎮</div>
-              <div><h3>${esc(g.name)}</h3><div class="game-meta">${g.status === "completed" ? "Completed" : "Active"} · Round ${g.round}</div></div>
+              <div><h3>${esc(g.name)}</h3><div class="game-meta">Active · Round ${g.round}</div></div>
             </div>
             <span class="chevron">›</span>
           </div>
@@ -101,15 +142,15 @@ function renderPlayers() {
 }
 
 async function renderHistory() {
-  const ids = state.games.map(g => g.id);
+  const ids = state.completedGames.map(g => g.id);
   if (!ids.length) { $("#content").innerHTML = `<div class="card empty">No game history yet.</div>`; return; }
   const { data, error } = await sb.from("score_changes").select("*, players(name)").in("game_id", ids).order("created_at", { ascending: false });
   if (error) { toast(error.message); return; }
   const by = {}; (data || []).forEach(x => (by[x.game_id] ??= []).push(x));
   $("#content").innerHTML = `
-    <div class="page-intro"><h2>All Game History</h2><p>Choose a game to see each player's history.</p></div>
+    <div class="page-intro"><h2>Game History</h2><p>Finished games are kept here. Ongoing games stay in Games.</p></div>
     <div class="stack">
-      ${state.games.map(g => `
+      ${state.completedGames.map(g => `
         <button class="card row history-game" style="text-align:left" onclick="historyGame('${g.id}')">
           <div class="row" style="justify-content:flex-start"><div class="game-icon">🎮</div><div><h3>${esc(g.name)}</h3><div class="game-meta">${(by[g.id] || []).length} score change${(by[g.id] || []).length === 1 ? "" : "s"} · Round ${g.round}</div></div></div><span class="chevron">›</span>
         </button>`).join("")}
@@ -130,6 +171,7 @@ function renderSettings() {
         <div class="setting-row"><label for="roundWinnerPenalty">Round Winner deduction</label><input id="roundWinnerPenalty" class="input setting-input" type="number" min="0" step="1" value="${state.undercutSettings.roundWinnerPenalty}"></div>
         <button class="btn primary" onclick="saveUndercutSettingUI()">Save UnderCut settings</button>
       </div>
+      <div class="card settings-card"><h2>Account</h2><p>Signed in as <b>@${esc(state.profile?.username || "user")}</b>. Your games and players are private to this account.</p><button class="btn danger" onclick="logout()">Log out</button></div>
       <div class="card settings-card"><h2>Scoring</h2><p>For the general scorekeeper, tap a player and enter any amount. The other game types are listed now and their scoring systems can be added later.</p></div>
     </div>`;
 }
@@ -145,8 +187,10 @@ async function saveUndercutSettingUI() {
 }
 
 let playerAvatarDraft = "";
+let pendingGameAddId = null;
 
-function newPlayer() {
+function newPlayer(forGameId = null) {
+  pendingGameAddId = forGameId;
   playerAvatarDraft = "";
   showPlayerEditor(null);
 }
@@ -197,14 +241,21 @@ function handleAvatarFile(input) {
 async function savePlayer(id) {
   const name = $("#playerName")?.value.trim();
   if (!name) { toast("Enter a player name"); return; }
-  const payload = { name, avatar_url: playerAvatarDraft || null };
+  const payload = { name, avatar_url: playerAvatarDraft || null, owner_id: state.session.user.id };
   const result = id
-    ? await sb.from("players").update(payload).eq("id", id)
-    : await sb.from("players").insert(payload);
+    ? await sb.from("players").update(payload).eq("id", id).select().single()
+    : await sb.from("players").insert(payload).select().single();
   if (result.error) { toast(result.error.message); return; }
+  const createdPlayer = result.data;
+  const targetGameId = pendingGameAddId;
+  pendingGameAddId = null;
   closeModal();
   toast(id ? "Player updated" : "Player added");
   await loadAll();
+  if (!id && targetGameId) {
+    await attachPlayerToGame(targetGameId, createdPlayer.id);
+    if (state.game?.id === targetGameId) await openGame(targetGameId);
+  }
 }
 
 async function editPlayer(id) {
@@ -239,9 +290,9 @@ async function createGame() {
   const name = $("#gameName").value.trim() || "Card Game";
   const selected = [...document.querySelectorAll("#playerChoices input:checked")].map(x => x.value);
   if (!selected.length) { toast("Choose at least one player"); return; }
-  const { data: g, error } = await sb.from("games").insert({ name, sort_mode: "custom" }).select().single();
+  const { data: g, error } = await sb.from("games").insert({ name, sort_mode: "custom", owner_id: state.session.user.id }).select().single();
   if (error) { toast(error.message); return; }
-  const rows = selected.map((pid, i) => ({ game_id: g.id, player_id: pid, score: 0, player_order: i }));
+  const rows = selected.map((pid, i) => ({ game_id: g.id, player_id: pid, score: 0, player_order: i, owner_id: state.session.user.id }));
   const { error: e } = await sb.from("game_players").insert(rows);
   if (e) { toast(e.message); return; }
   closeModal(); await loadAll(); openGame(g.id);
@@ -283,13 +334,18 @@ function roundScore(pid, round = state.game.round) {
     .filter(x => x.player_id === pid && Number(x.round) === Number(round))
     .reduce((sum, x) => sum + Number(x.delta || 0), 0);
 }
+function currentWinner() {
+  const ps = orderedPlayers();
+  if (!ps.length) return null;
+  return [...ps].sort((a, b) => isUnderCutGame() ? a.score - b.score : b.score - a.score)[0];
+}
+
 function playerRoundLabel(pid) {
   const current = roundScore(pid, state.game.round);
   if (state.game.round > 1) {
-    const previous = roundScore(pid, Number(state.game.round) - 1);
-    return current !== 0 || state.history.some(x => x.player_id === pid && Number(x.round) === Number(state.game.round))
-      ? `This round: ${current}`
-      : `Round ${Number(state.game.round) - 1}: ${previous}`;
+    const previousRound = Number(state.game.round) - 1;
+    const previous = roundScore(pid, previousRound);
+    return `Round ${previousRound}: ${previous} · This round: ${current}`;
   }
   return `This round: ${current}`;
 }
@@ -298,6 +354,9 @@ function renderGame() {
   setTitle(state.game.name);
   const ps = orderedPlayers();
   const undercut = isUnderCutGame();
+  const finished = state.game.status === "completed";
+  const winner = finished ? currentWinner() : null;
+  const winnerText = winner ? `Winner: ${esc(winner.players.name)} · ${winner.score} points` : "";
   $("#content").innerHTML = `
     <div class="game-header">
       <button class="btn small" onclick="goGames()">‹ Games</button>
@@ -312,17 +371,20 @@ function renderGame() {
           <div class="score-big">${gp.score}</div><span class="chevron">›</span>
         </button>`).join("")}
     </div>
-    <div class="actions game-actions">
-      <button class="btn" onclick="undo()">↶ Undo</button>
-      <button class="btn" onclick="historyGame('${state.game.id}')">History</button>
-      <button class="btn primary" style="flex:1" onclick="nextRound()">Next Round</button>
-    </div>
-    ${state.game.status === "active" ? `<button class="btn finish-btn" onclick="finishGame()">Finish Game</button>` : `<div class="notice">This game is finished. You can still view its history.</div>`}`;
+    ${finished ? `
+      <div class="winner-inline">🏆 <b>${winnerText}</b><small>${undercut ? "Lowest score wins in UnderCut." : "Highest score wins."}</small></div>` : `
+      <div class="actions game-actions">
+        <button class="btn" onclick="undo()">↶ Undo</button>
+        <button class="btn" onclick="historyGame('${state.game.id}')">History</button>
+      </div>
+      <button class="btn finish-btn" onclick="finishGame()">Finish Game</button>
+    `}
+    ${!finished ? `<button class="btn add-player-game" onclick="addPlayerToGameUI()">＋ Add Player</button>` : ""}`;
 }
-
 let selectedPlayerId = null;
 
 function scorePlayer(pid) {
+  if (state.game?.status === "completed") return;
   selectedPlayerId = pid;
   const gp = state.gamePlayers.find(x => x.player_id === pid);
   const p = gp?.players;
@@ -348,6 +410,7 @@ function scorePlayer(pid) {
 }
 
 async function applyDelta(pid, delta) {
+  if (state.game?.status === "completed") return false;
   const gp = state.gamePlayers.find(x => x.player_id === pid);
   if (!gp || !Number.isFinite(delta)) return false;
   const round = Number(state.game.round);
@@ -370,7 +433,7 @@ async function applyDelta(pid, delta) {
 
   const updatedAt = new Date().toISOString();
   const [changeResult, playerResult, gameResult] = await Promise.all([
-    sb.from("score_changes").insert({ game_id: state.game.id, player_id: pid, round, delta }),
+    sb.from("score_changes").insert({ game_id: state.game.id, player_id: pid, round, delta, owner_id: state.session.user.id }),
     sb.from("game_players").update({ score: newScore }).eq("id", gp.id),
     sb.from("games").update({ updated_at: updatedAt }).eq("id", state.game.id)
   ]);
@@ -459,6 +522,7 @@ async function confirmUndercut(pid) {
 }
 
 async function undo() {
+  if (state.game?.status === "completed") return;
   const last = state.history[0]; if (!last) { toast("Nothing to undo"); return; }
   const gp = state.gamePlayers.find(x => x.player_id === last.player_id); if (!gp) return;
   await sb.from("game_players").update({ score: gp.score - last.delta }).eq("id", gp.id);
@@ -478,19 +542,47 @@ async function nextRound(auto = false) {
   celebrate(`ROUND ${next}`);
 }
 async function finishGame() {
+  if (state.game?.status === "completed") return;
   const ps = orderedPlayers(); if (!ps.length) return;
+  if (!confirm("Finish this game? Scores will become read-only.")) return;
   const sorted = [...ps].sort((a, b) => isUnderCutGame() ? a.score - b.score : b.score - a.score);
   const winner = sorted[0];
-  await sb.from("games").update({ status: "completed", updated_at: new Date().toISOString() }).eq("id", state.game.id);
+  const { error } = await sb.from("games").update({ status: "completed", updated_at: new Date().toISOString() }).eq("id", state.game.id);
+  if (error) { toast(error.message); return; }
   state.game.status = "completed";
-  showWinners(sorted, winner);
+  renderGame();
+  celebrate(`WINNER: ${winner.players.name}`);
+  await loadAll();
+  state.game = { ...state.game, status: "completed" };
+  renderGame();
 }
 function showWinners(sorted, winner) {
   showModal(`<div class="winner"><div class="trophy">🏆</div><div class="winner-kicker">GAME OVER</div><div class="winner-label">Winner</div><div class="winner-name">${esc(winner.players.name)}</div><div class="score-big winner-score">${winner.score}</div><div class="podium">${sorted.slice(0, 3).map((p, i) => `<div class="card"><div class="place">${["1ST", "2ND", "3RD"][i]}</div>${avatar(p.players)}<div class="player-name" style="margin-top:8px">${esc(p.players.name)}</div><div class="score">${p.score}</div></div>`).join("")}</div><div class="actions" style="margin-top:18px"><button class="btn primary" onclick="closeModal();renderGame()">Return to Game</button><button class="btn" onclick="goGames()">Games</button></div></div>`);
 }
 function gameMenu() {
-  showModal(`<h2>${esc(state.game.name)}</h2><div class="stack"><button class="btn" onclick="sortPlayers()">Choose player order</button><button class="btn" onclick="renameGame()">Rename game</button><button class="btn" onclick="historyGame('${state.game.id}')">Game history</button><button class="btn danger" onclick="deleteGame('${state.game.id}')">Delete game</button><button class="btn" onclick="closeModal()">Cancel</button></div>`);
+  const finished = state.game.status === "completed";
+  showModal(`<h2>${esc(state.game.name)}</h2><div class="stack"><button class="btn" onclick="sortPlayers()">Choose player order</button>${!finished ? `<button class="btn" onclick="addPlayerToGameUI()">＋ Add player</button><button class="btn" onclick="renameGame()">Rename game</button>` : ""}<button class="btn" onclick="historyGame('${state.game.id}')">Game history</button><button class="btn danger" onclick="deleteGame('${state.game.id}')">Delete game</button><button class="btn" onclick="closeModal()">Cancel</button></div>`);
 }
+function addPlayerToGameUI() {
+  if (state.game?.status === "completed") return;
+  closeModal();
+  const existing = new Set(state.gamePlayers.map(gp => gp.player_id));
+  const available = state.players.filter(p => !existing.has(p.id));
+  showModal(`<h2>Add player</h2><p class="game-meta">Add a player to this ongoing game. Their score starts at 0.</p><div class="stack">${available.length ? available.map(p => `<button class="card row" style="text-align:left" onclick="attachPlayerToGame('${state.game.id}','${p.id}')"><span class="row" style="justify-content:flex-start">${avatar(p)}<span class="player-name">${esc(p.name)}</span></span><span class="chevron">＋</span></button>`).join("") : `<div class="empty">No unused players available.</div>`}<button class="btn primary" onclick="newPlayer('${state.game.id}')">＋ Create new player</button><button class="btn" onclick="closeModal()">Cancel</button></div>`);
+}
+
+async function attachPlayerToGame(gameId, playerId) {
+  if (!state.session) return;
+  const { data: existing } = await sb.from("game_players").select("id").eq("game_id", gameId).eq("player_id", playerId).maybeSingle();
+  if (existing) { toast("Player is already in this game"); return; }
+  const order = state.game?.id === gameId ? state.gamePlayers.length : 0;
+  const { error } = await sb.from("game_players").insert({ game_id: gameId, player_id: playerId, score: 0, player_order: order, owner_id: state.session.user.id });
+  if (error) { toast(error.message); return; }
+  closeModal();
+  toast("Player added to game");
+  if (state.game?.id === gameId) await openGame(gameId);
+}
+
 function sortPlayers() {
   showModal(`<h2>Player order</h2><div class="stack"><button class="btn" onclick="setSort('custom')">Custom order</button><button class="btn" onclick="setSort('highest')">Highest score first</button><button class="btn" onclick="setSort('lowest')">Lowest score first</button><button class="btn" onclick="customOrder()">Edit custom order</button></div>`);
 }
@@ -521,7 +613,7 @@ async function deleteGame(id) {
   if (error) toast(error.message); else { closeModal(); state.game = null; await loadAll(); }
 }
 async function historyGame(id) {
-  const g = state.games.find(x => x.id === id) || (state.game?.id === id ? state.game : null); if (!g) return;
+  const g = state.games.find(x => x.id === id) || state.completedGames.find(x => x.id === id) || (state.game?.id === id ? state.game : null); if (!g) return;
   const { data, error } = await sb.from("score_changes").select("*, players(name)").eq("game_id", id).order("created_at", { ascending: false });
   if (error) { toast(error.message); return; }
   const groups = {}; (data || []).forEach(x => (groups[x.player_id] ??= []).push(x));
@@ -550,6 +642,6 @@ document.querySelectorAll(".nav-item").forEach(b => b.addEventListener("click", 
 $("#themeBtn").addEventListener("click", toggleTheme);
 
 const style = document.createElement("style");
-style.textContent = `.celebrate{position:fixed;left:50%;top:42%;transform:translate(-50%,-50%) scale(.7);z-index:100;background:var(--accent);color:white;padding:18px 28px;border-radius:18px;font-size:22px;font-weight:900;box-shadow:0 12px 40px rgba(0,0,0,.25);animation:celebrate 1.25s ease both}@keyframes celebrate{0%{opacity:0;transform:translate(-50%,-50%) scale(.6)}25%{opacity:1;transform:translate(-50%,-50%) scale(1.08)}70%{transform:translate(-50%,-50%) scale(1)}100%{opacity:0;transform:translate(-50%,-70%) scale(1)}}`;
+style.textContent = `.winner-inline{margin-top:18px;padding:18px 20px;border:1px solid var(--border);border-radius:20px;background:var(--card);font-size:18px;display:flex;flex-direction:column;gap:6px}.winner-inline small{color:var(--muted);font-size:14px}.add-player-game{width:100%;margin-top:14px}.celebrate{position:fixed;left:50%;top:42%;transform:translate(-50%,-50%) scale(.7);z-index:100;background:var(--accent);color:white;padding:18px 28px;border-radius:18px;font-size:22px;font-weight:900;box-shadow:0 12px 40px rgba(0,0,0,.25);animation:celebrate 1.25s ease both}@keyframes celebrate{0%{opacity:0;transform:translate(-50%,-50%) scale(.6)}25%{opacity:1;transform:translate(-50%,-50%) scale(1.08)}70%{transform:translate(-50%,-50%) scale(1)}100%{opacity:0;transform:translate(-50%,-70%) scale(1)}}`;
 document.head.appendChild(style);
-loadAll();
+bootAuth();

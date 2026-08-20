@@ -1,124 +1,71 @@
--- ScoreMate Classic database update
--- Safe to run after your original ScoreMate schema.
--- This file also works for a fresh project.
+-- Scorekeeper private accounts schema
+-- Run after the original Scorekeeper schema.
+-- IMPORTANT: In Supabase Dashboard, Authentication > Providers > Email, turn OFF
+-- "Confirm email" because the app presents username + password and does not expose email.
 
-create extension if not exists pgcrypto;
-
-create table if not exists public.players (
-  id uuid primary key default gen_random_uuid(),
-  name text not null,
-  avatar_url text,
+create table if not exists public.profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  username text not null unique,
   created_at timestamptz not null default now()
 );
 
-create table if not exists public.games (
-  id uuid primary key default gen_random_uuid(),
-  name text not null,
-  status text not null default 'active' check (status in ('active','completed')),
-  round integer not null default 1,
-  winning_score integer not null default 500,
-  winner_rule text not null default 'higher' check (winner_rule in ('higher','lower')),
-  sort_mode text not null default 'custom' check (sort_mode in ('custom','highest','lowest')),
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
+alter table public.players add column if not exists owner_id uuid;
+alter table public.games add column if not exists owner_id uuid;
+alter table public.game_players add column if not exists owner_id uuid;
+alter table public.score_changes add column if not exists owner_id uuid;
 
-create table if not exists public.game_players (
-  id uuid primary key default gen_random_uuid(),
-  game_id uuid not null references public.games(id) on delete cascade,
-  player_id uuid not null references public.players(id) on delete cascade,
-  score integer not null default 0,
-  player_order integer not null default 0,
-  created_at timestamptz not null default now(),
-  unique(game_id, player_id)
-);
+create index if not exists idx_players_owner on public.players(owner_id);
+create index if not exists idx_games_owner on public.games(owner_id);
+create index if not exists idx_game_players_owner on public.game_players(owner_id);
+create index if not exists idx_score_changes_owner on public.score_changes(owner_id);
 
-create table if not exists public.score_changes (
-  id uuid primary key default gen_random_uuid(),
-  game_id uuid not null references public.games(id) on delete cascade,
-  player_id uuid not null references public.players(id) on delete cascade,
-  round integer not null default 1,
-  delta integer not null,
-  created_at timestamptz not null default now()
-);
-
-alter table public.players add column if not exists avatar_url text;
-alter table public.games add column if not exists sort_mode text;
-alter table public.game_players add column if not exists player_order integer;
-
-update public.games set sort_mode = 'custom' where sort_mode is null;
-update public.game_players gp
-set player_order = sub.rn - 1
-from (
-  select id, row_number() over (partition by game_id order by created_at, id) rn
-  from public.game_players
-) sub
-where gp.id = sub.id and gp.player_order is null;
-
-alter table public.games alter column sort_mode set default 'custom';
-alter table public.games alter column sort_mode set not null;
-alter table public.game_players alter column player_order set default 0;
-alter table public.game_players alter column player_order set not null;
-
+alter table public.profiles enable row level security;
 alter table public.players enable row level security;
 alter table public.games enable row level security;
 alter table public.game_players enable row level security;
 alter table public.score_changes enable row level security;
 
-drop policy if exists "Public can read players" on public.players;
-drop policy if exists "Public can create players" on public.players;
-drop policy if exists "Public can update players" on public.players;
-drop policy if exists "Public can delete players" on public.players;
-create policy "Public can read players" on public.players for select using (true);
-create policy "Public can create players" on public.players for insert with check (true);
-create policy "Public can update players" on public.players for update using (true) with check (true);
-create policy "Public can delete players" on public.players for delete using (true);
+-- Remove the old public policies.
+do $$ declare r record; begin
+  for r in select policyname, tablename from pg_policies where schemaname='public' and tablename in ('players','games','game_players','score_changes','profiles') loop
+    execute format('drop policy if exists %I on public.%I', r.policyname, r.tablename);
+  end loop;
+end $$;
 
-drop policy if exists "Public can read games" on public.games;
-drop policy if exists "Public can create games" on public.games;
-drop policy if exists "Public can update games" on public.games;
-drop policy if exists "Public can delete games" on public.games;
-create policy "Public can read games" on public.games for select using (true);
-create policy "Public can create games" on public.games for insert with check (true);
-create policy "Public can update games" on public.games for update using (true) with check (true);
-create policy "Public can delete games" on public.games for delete using (true);
+create policy "Profiles are private" on public.profiles
+for all to authenticated using (id = auth.uid()) with check (id = auth.uid());
 
-drop policy if exists "Public can read game players" on public.game_players;
-drop policy if exists "Public can create game players" on public.game_players;
-drop policy if exists "Public can update game players" on public.game_players;
-drop policy if exists "Public can delete game players" on public.game_players;
-create policy "Public can read game players" on public.game_players for select using (true);
-create policy "Public can create game players" on public.game_players for insert with check (true);
-create policy "Public can update game players" on public.game_players for update using (true) with check (true);
-create policy "Public can delete game players" on public.game_players for delete using (true);
+create policy "Users own players" on public.players
+for all to authenticated using (owner_id = auth.uid()) with check (owner_id = auth.uid());
 
-drop policy if exists "Public can read score changes" on public.score_changes;
-drop policy if exists "Public can create score changes" on public.score_changes;
-drop policy if exists "Public can delete score changes" on public.score_changes;
-create policy "Public can read score changes" on public.score_changes for select using (true);
-create policy "Public can create score changes" on public.score_changes for insert with check (true);
-create policy "Public can delete score changes" on public.score_changes for delete using (true);
+create policy "Users own games" on public.games
+for all to authenticated using (owner_id = auth.uid()) with check (owner_id = auth.uid());
 
-create index if not exists idx_game_players_game on public.game_players(game_id);
-create index if not exists idx_game_players_order on public.game_players(game_id, player_order);
-create index if not exists idx_score_changes_game on public.score_changes(game_id);
-create index if not exists idx_score_changes_player on public.score_changes(game_id, player_id);
-create index if not exists idx_score_changes_time on public.score_changes(created_at);
+create policy "Users own game players" on public.game_players
+for all to authenticated using (owner_id = auth.uid()) with check (owner_id = auth.uid());
 
-insert into storage.buckets (id, name, public)
-values ('player-avatars','player-avatars',true)
-on conflict (id) do update set public=true;
+create policy "Users own score changes" on public.score_changes
+for all to authenticated using (owner_id = auth.uid()) with check (owner_id = auth.uid());
 
-drop policy if exists "Public can view player avatars" on storage.objects;
-drop policy if exists "Public can upload player avatars" on storage.objects;
-drop policy if exists "Public can update player avatars" on storage.objects;
-drop policy if exists "Public can delete player avatars" on storage.objects;
+-- Automatically create a profile when a new auth account is created.
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+begin
+  insert into public.profiles (id, username)
+  values (new.id, lower(coalesce(new.raw_user_meta_data->>'username', split_part(new.email,'@',1))))
+  on conflict (id) do nothing;
+  return new;
+end;
+$$;
 
-create policy "Public can view player avatars" on storage.objects
-for select using (bucket_id='player-avatars');
-create policy "Public can upload player avatars" on storage.objects
-for insert with check (bucket_id='player-avatars');
-create policy "Public can update player avatars" on storage.objects
-for update using (bucket_id='player-avatars') with check (bucket_id='player-avatars');
-create policy "Public can delete player avatars" on storage.objects
-for delete using (bucket_id='player-avatars');
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+after insert on auth.users
+for each row execute procedure public.handle_new_user();
+
+-- New accounts can only see rows they own. Any old rows with NULL owner_id are intentionally
+-- hidden after this migration. If you need to keep an old game, create/login to your account
+-- first, then we can provide a one-time migration query to assign those legacy rows.

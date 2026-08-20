@@ -1,24 +1,26 @@
-SCOREKEEPER CLASSIC V3
+SCOREKEEPER PRIVATE ACCOUNTS
 
-Upload all files to the root of your GitHub score repository.
+1. Upload the app files to GitHub.
+2. Run schema.sql in Supabase SQL Editor.
+3. In Supabase Dashboard, go to Authentication > Providers > Email and turn OFF Confirm email.
+4. Open the app and create an account using a username and password.
 
-The app uses the Supabase project configured in config.js.
-The existing database schema remains compatible. No new SQL is required for this update.
+USERNAME LOGIN
+The app displays username + password only. Supabase Auth internally uses a synthetic email address derived from the username. Users never need to enter an email in the app.
 
-New in V3:
-- Four built-in game types: UnderCut, Lavaa, Dingu, Hukun kaalaa.
-- UnderCut scoring system is active.
-- Tap a player to open the classic scoring panel.
-- UnderCut button awards the configured amount, default +60.
-- UnderCut asks who has the lowest and allows multiple players to be selected.
-- Selected lowest players receive the configured deduction, default -10 each.
-- UnderCut points can be changed in Settings.
-- Lavaa, Dingu and Hukun kaalaa are game slots for later scoring rules.
-- Existing history, player history, sorting, deletion, light/dark mode and winner screen remain.
+PRIVACY
+Each account has its own games, players, scores and history. Row Level Security prevents one account from reading or changing another account's data.
 
+LEGACY DATA
+Games created before private accounts have NULL owner_id and are hidden after schema.sql is applied. If you need to keep them, edit claim_legacy_data.sql, replace YOUR_USERNAME with your account username, and run it once in Supabase SQL Editor.
 
-V3.1 fixes:
-- Each player shows the previous round's total score under their name.
-- Score entry applies immediately with + or - and no Add Score button.
-- Any whole number can be entered. The sign is controlled by the + or - button.
-- UnderCut winners are ranked from lowest total score to highest.
+CURRENT GAME FEATURES
+- UnderCut scoring
+- UnderCut settings
+- Round Winner deduction
+- Automatic round advance when every player has recorded a score
+- Previous round and current round scores shown on player cards
+- Finished games become read-only
+- Finished games move to History
+- Add existing or new players to an ongoing game
+- Player photos, emojis and built-in avatars

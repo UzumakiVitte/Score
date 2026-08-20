@@ -13,6 +13,8 @@
         .history-card{display:block}
         .history-card-main{width:100%;display:block;border:0;background:transparent;color:inherit;padding:0;text-align:left;font:inherit;cursor:pointer}
         .history-delete{width:100%;margin-top:12px}
+        .history-modal-actions{display:flex;gap:10px;justify-content:center;align-items:center}
+        .history-modal-actions .btn{flex:1}
         .btn.danger{background:#b83b3b;color:#fff;border-color:#b83b3b}
         .btn.danger:disabled{opacity:.65}
       `;
@@ -64,7 +66,6 @@
         }
       };
 
-      const originalRenderHistory=renderHistory;
       renderHistory=async function(){
         const games=state.completedGames||[];
         if(!games.length){
@@ -101,6 +102,30 @@
               <button class="btn danger history-delete" data-game-id="${g.id}" onclick="deleteHistoryGame('${g.id}')">Delete Game</button>
             </div>`;
           }).join("")}</div>`;
+      };
+
+      // Add Delete Game beside Close in the history winner modal.
+      const originalHistoryGame=historyGame;
+      historyGame=async function(id){
+        await originalHistoryGame(id);
+        const modal=$("#modalRoot");
+        if(!modal) return;
+
+        const closeButton=modal.querySelector(".history-winner .actions .btn.primary");
+        if(!closeButton || modal.querySelector(".history-modal-delete")) return;
+
+        const actions=closeButton.parentElement;
+        actions.classList.add("history-modal-actions");
+
+        const del=document.createElement("button");
+        del.className="btn danger history-modal-delete history-delete";
+        del.dataset.gameId=id;
+        del.textContent="Delete Game";
+        del.onclick=()=>{
+          closeModal();
+          deleteHistoryGame(id);
+        };
+        actions.appendChild(del);
       };
 
       window.__scorekeeperVersion="v12";

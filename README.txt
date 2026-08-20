@@ -1,21 +1,17 @@
-Scorekeeper v15 Hukun kaalaa update
+Scorekeeper v16
 
-Files:
-- loader-v15.js
-- index.html
+Display names:
+UnderCut
+ލަވާ
+ޑިންގު
+ހުކުން ކާލާ
 
-Upload loader-v15.js to the repository.
-Replace the existing index.html with this index.html.
+Dhivehi names use Faruma through the Web Faruma stylesheet.
 
-Hukun kaalaa:
-- Supports any number of players already supported by the app.
-- Each round starts with guesses.
-- Each player enters a guess.
-- After all guesses are entered, each player gets ✓ and ✕.
-- ✓ awards guess × 100.
-- ✕ deducts guess × 100.
-- The app automatically starts the next round after every player is marked.
-- The game can be finished manually.
-- Highest final score wins.
+This update is a small localization layer on top of loader-v15. It does not change the existing scoring logic.
 
-The Hukun round data is stored in this browser's local storage so a refresh does not lose the current round's guesses/results. The existing game scores remain in Supabase.
+Upload:
+1. loader-v16.js
+2. Replace index.html
+
+Keep loader-v15.js and all existing app files.

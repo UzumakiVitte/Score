@@ -1,7 +1,7 @@
 const { createClient } = window.supabase;
 const sb = createClient(SCORE_CONFIG.SUPABASE_URL, SCORE_CONFIG.SUPABASE_PUBLISHABLE_KEY);
 
-const DEFAULT_SETTINGS = { undercutAward: 60, undercutPenalty: 10 };
+const DEFAULT_SETTINGS = { undercutAward: 60, undercutPenalty: 10, roundWinnerPenalty: 10 };
 const state = {
   tab: "games",
   games: [],
@@ -127,6 +127,7 @@ function renderSettings() {
         <p>Change the points used by the UnderCut action. Defaults are 60 points awarded to the player who undercuts and 10 points deducted from the lowest player(s).</p>
         <div class="setting-row"><label for="undercutAward">Undercut points</label><input id="undercutAward" class="input setting-input" type="number" min="0" step="1" value="${state.undercutSettings.undercutAward}"></div>
         <div class="setting-row"><label for="undercutPenalty">Lowest player deduction</label><input id="undercutPenalty" class="input setting-input" type="number" min="0" step="1" value="${state.undercutSettings.undercutPenalty}"></div>
+        <div class="setting-row"><label for="roundWinnerPenalty">Round Winner deduction</label><input id="roundWinnerPenalty" class="input setting-input" type="number" min="0" step="1" value="${state.undercutSettings.roundWinnerPenalty}"></div>
         <button class="btn primary" onclick="saveUndercutSettingUI()">Save UnderCut settings</button>
       </div>
       <div class="card settings-card"><h2>Scoring</h2><p>For the general scorekeeper, tap a player and enter any amount. The other game types are listed now and their scoring systems can be added later.</p></div>
@@ -136,8 +137,9 @@ function renderSettings() {
 async function saveUndercutSettingUI() {
   const award = Math.max(0, Math.trunc(Number($("#undercutAward").value)));
   const penalty = Math.max(0, Math.trunc(Number($("#undercutPenalty").value)));
-  if (!Number.isFinite(award) || !Number.isFinite(penalty)) { toast("Enter valid points"); return; }
-  state.undercutSettings = { undercutAward: award, undercutPenalty: penalty };
+  const roundWinnerPenalty = Math.max(0, Math.trunc(Number($("#roundWinnerPenalty").value)));
+  if (!Number.isFinite(award) || !Number.isFinite(penalty) || !Number.isFinite(roundWinnerPenalty)) { toast("Enter valid points"); return; }
+  state.undercutSettings = { undercutAward: award, undercutPenalty: penalty, roundWinnerPenalty };
   saveUndercutSettings();
   toast("UnderCut settings saved");
 }
@@ -246,11 +248,22 @@ async function createGame() {
 }
 
 async function openGame(id) {
-  const { data: g, error: ge } = await sb.from("games").select("*").eq("id", id).single();
-  const { data: gp, error: pe } = await sb.from("game_players").select("*, players(*)").eq("game_id", id).order("player_order");
-  if (ge || pe || !g || !gp) { toast("Could not load game"); return; }
-  state.game = g; state.gamePlayers = gp; state.sortMode = g.sort_mode || "custom";
-  await loadGameHistory();
+  const [gameResult, playersResult, historyResult] = await Promise.all([
+    sb.from("games").select("*").eq("id", id).single(),
+    sb.from("game_players").select("*, players(*)").eq("game_id", id).order("player_order"),
+    sb.from("score_changes").select("*, players(name)").eq("game_id", id).order("created_at", { ascending: false })
+  ]);
+  const { data: g, error: ge } = gameResult;
+  const { data: gp, error: pe } = playersResult;
+  const { data: history, error: he } = historyResult;
+  if (ge || pe || he || !g || !gp) {
+    toast(ge?.message || pe?.message || he?.message || "Could not load game");
+    return;
+  }
+  state.game = g;
+  state.gamePlayers = gp;
+  state.history = history || [];
+  state.sortMode = g.sort_mode || "custom";
   renderGame();
 }
 async function loadGameHistory() {
@@ -324,7 +337,7 @@ function scorePlayer(pid) {
       <button id="addMode" onclick="saveScore(1)">＋</button>
       <button id="subMode" onclick="saveScore(-1)">−</button>
     </div>
-    ${isUnderCutGame() ? `<button class="undercut-action" onclick="startUndercut('${pid}')"><span>✦</span><b>Undercut</b><small>+${state.undercutSettings.undercutAward} points</small></button>` : ""}
+    ${isUnderCutGame() ? `<button class="undercut-action" onclick="startUndercut('${pid}')"><span>✦</span><b>Undercut</b><small>+${state.undercutSettings.undercutAward} points</small></button><button class="undercut-action" onclick="applyRoundWinner('${pid}')"><span>🏆</span><b>Round Winner</b><small>−${state.undercutSettings.roundWinnerPenalty} points</small></button>` : ""}
     <div class="actions" style="margin-top:14px"><button class="btn" onclick="closeModal()">Cancel</button></div>`);
 
   const input = $("#scoreAmount");
@@ -337,15 +350,39 @@ function scorePlayer(pid) {
 async function applyDelta(pid, delta) {
   const gp = state.gamePlayers.find(x => x.player_id === pid);
   if (!gp || !Number.isFinite(delta)) return false;
-  const { error: e } = await sb.from("score_changes").insert({
+  const round = Number(state.game.round);
+  const previousScore = Number(gp.score);
+  const newScore = previousScore + delta;
+  const localId = `local-${Date.now()}-${Math.random()}`;
+
+  // Update the local state first so the interface responds immediately.
+  gp.score = newScore;
+  state.history.unshift({
+    id: localId,
     game_id: state.game.id,
     player_id: pid,
-    round: state.game.round,
-    delta
+    round,
+    delta,
+    created_at: new Date().toISOString(),
+    players: gp.players
   });
-  if (e) { toast(e.message); return false; }
-  const { error: u } = await sb.from("game_players").update({ score: gp.score + delta }).eq("id", gp.id);
-  if (u) { toast(u.message); return false; }
+  renderGame();
+
+  const updatedAt = new Date().toISOString();
+  const [changeResult, playerResult, gameResult] = await Promise.all([
+    sb.from("score_changes").insert({ game_id: state.game.id, player_id: pid, round, delta }),
+    sb.from("game_players").update({ score: newScore }).eq("id", gp.id),
+    sb.from("games").update({ updated_at: updatedAt }).eq("id", state.game.id)
+  ]);
+
+  if (changeResult.error || playerResult.error || gameResult.error) {
+    gp.score = previousScore;
+    state.history = state.history.filter(x => x.id !== localId);
+    toast(changeResult.error?.message || playerResult.error?.message || gameResult.error?.message || "Could not save score");
+    renderGame();
+    return false;
+  }
+  state.game.updated_at = updatedAt;
   return true;
 }
 
@@ -356,10 +393,7 @@ async function saveScore(direction) {
   const wholeAmount = Math.trunc(Math.abs(amount));
   const delta = wholeAmount * direction;
   if (!(await applyDelta(selectedPlayerId, delta))) return;
-
-  await sb.from("games").update({ updated_at: new Date().toISOString() }).eq("id", state.game.id);
   closeModal();
-  await openGame(state.game.id);
   toast(delta >= 0 ? `+${delta}` : `${delta}`);
   await advanceIfRoundComplete();
 }
@@ -399,6 +433,15 @@ function startUndercut(pid) {
       <div class="actions"><button class="btn" onclick="scorePlayer('${pid}')">Back</button><button class="btn primary" onclick="confirmUndercut('${pid}')">Apply Undercut</button></div>
     </div>`);
 }
+async function applyRoundWinner(pid) {
+  if (!isUnderCutGame()) return;
+  const penalty = state.undercutSettings.roundWinnerPenalty;
+  if (!(await applyDelta(pid, -penalty))) return;
+  closeModal();
+  toast(`−${penalty} Round Winner`);
+  await advanceIfRoundComplete();
+}
+
 function toggleLowest(btn) { btn.classList.toggle("selected"); }
 async function confirmUndercut(pid) {
   const selected = [...document.querySelectorAll(".lowest-player.selected")].map(x => x.dataset.pid);
@@ -426,9 +469,13 @@ async function redoLast() { toast("Redo is available after an undo in a future u
 async function nextRound(auto = false) {
   if (state.game.status === "completed") return;
   const next = Number(state.game.round) + 1;
-  await sb.from("games").update({ round: next, updated_at: new Date().toISOString() }).eq("id", state.game.id);
-  await openGame(state.game.id);
-  celebrate(auto ? `ROUND ${next}` : `ROUND ${next}`);
+  const updatedAt = new Date().toISOString();
+  const { error } = await sb.from("games").update({ round: next, updated_at: updatedAt }).eq("id", state.game.id);
+  if (error) { toast(error.message); return; }
+  state.game.round = next;
+  state.game.updated_at = updatedAt;
+  renderGame();
+  celebrate(`ROUND ${next}`);
 }
 async function finishGame() {
   const ps = orderedPlayers(); if (!ps.length) return;

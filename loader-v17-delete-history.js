@@ -1,6 +1,6 @@
 (function(){
   const s=document.createElement("script");
-  s.src="loader-v16.js?19";
+  s.src="loader-v16.js?20";
   s.onload=function(){
     const wait=()=>{
       if(typeof state==="undefined" || typeof render!=="function" || typeof deleteHistoryGameV16!=="function"){
@@ -8,28 +8,38 @@
         return;
       }
 
-      const ensureDeleteButtons=()=>{
+      const addDeleteButtons=()=>{
         if(state.tab!=="history") return;
 
-        document.querySelectorAll(".history-card").forEach(card=>{
-          if(card.querySelector(".history-delete-v17")) return;
+        const content=document.querySelector("#content");
+        if(!content) return;
 
-          const main=card.querySelector(".history-card-main");
-          if(!main) return;
+        const triggers=[...content.querySelectorAll("[onclick]")].filter(el=>{
+          const value=el.getAttribute("onclick")||"";
+          return value.includes("historyGame(");
+        });
 
-          const onclick=main.getAttribute("onclick") || "";
-          const match=onclick.match(/historyGame\('([^']+)'\)/);
+        triggers.forEach(trigger=>{
+          const onclick=trigger.getAttribute("onclick")||"";
+          const match=onclick.match(/historyGame\(['"]([^'"]+)['"]\)/);
           if(!match) return;
 
           const id=match[1];
+          let card=trigger.closest(".history-card") || trigger.closest(".card");
+          if(!card) card=trigger.parentElement;
+          if(!card || card.querySelector(".history-delete-v18")) return;
+
           const btn=document.createElement("button");
-          btn.className="btn danger history-delete-v17";
+          btn.className="btn danger history-delete-v18";
           btn.type="button";
           btn.textContent="Delete Game";
+          btn.setAttribute("aria-label","Delete this game from history");
           btn.onclick=(e)=>{
+            e.preventDefault();
             e.stopPropagation();
             deleteHistoryGameV16(id);
           };
+
           card.appendChild(btn);
         });
       };
@@ -37,28 +47,35 @@
       const originalRender=render;
       render=function(){
         const result=originalRender.apply(this,arguments);
-        setTimeout(ensureDeleteButtons,0);
+        setTimeout(addDeleteButtons,0);
         return result;
       };
 
       const style=document.createElement("style");
-      style.id="history-v17-style";
+      style.id="history-v18-style";
       style.textContent=`
-        .history-delete-v17{
-          width:100%;
-          margin-top:12px;
+        .history-delete-v18{
+          width:100%!important;
+          margin-top:12px!important;
           background:#b83b3b!important;
           color:#fff!important;
           border-color:#b83b3b!important;
           display:block!important;
           visibility:visible!important;
           opacity:1!important;
+          position:relative!important;
+          z-index:5!important;
         }
       `;
       document.head.appendChild(style);
 
-      ensureDeleteButtons();
-      window.__scorekeeperVersion="v17";
+      const observer=new MutationObserver(()=>{
+        if(state.tab==="history") setTimeout(addDeleteButtons,0);
+      });
+      observer.observe(document.querySelector("#content")||document.body,{childList:true,subtree:true});
+
+      addDeleteButtons();
+      window.__scorekeeperVersion="v18";
     };
     wait();
   };

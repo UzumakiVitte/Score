@@ -1,26 +1,23 @@
-COMPLETE HOME SCREEN CACHE FIX
+HOME SCREEN FORCE-NEW-URL FIX
 
-Upload/replace these 4 files in the ROOT of your Score repository:
+This is different from the previous cache fix.
 
-1. index.html
-2. manifest.json
-3. loader-v24-refresh-undercut.js
-4. loader-v25-cache-buster.js
+The Home Screen app can keep its installed start URL even after files at "/" are updated.
+This package gives the Home Screen app a genuinely NEW start URL: home-v3.html.
 
-Do not replace app.js, style-v4.css, loader-v22-avatars-nav.js, loader-v23-admin.js, config.js, game files, or icons.
+UPLOAD/REPLACE:
+1. Replace manifest.json with the included manifest.json.
+2. Upload home-v3.html to the ROOT of the repository.
 
-This version:
-- Keeps the new bottom navigation.
-- Keeps the small refresh button.
-- Keeps the UnderCut new default deduction of 5 for users with no saved setting.
-- Adds cache-busting query versions to the app assets.
-- Updates the manifest start URL.
-- Clears old Cache Storage when the app version changes.
-- Reloads once after detecting the new version.
+Do NOT replace app.js, style-v4.css, loader-v22-avatars-nav.js, loader-v23-admin.js,
+loader-v24-refresh-undercut.js, config.js, or any game/icon files.
 
-After uploading:
-1. Commit all 4 files.
-2. Wait for GitHub Pages to publish.
-3. Open the normal Safari website once and confirm the new UI appears.
-4. Delete the old Home Screen Scorekeeper icon.
-5. Add the site to Home Screen again.
+After GitHub Pages publishes:
+1. Open the normal website and confirm it shows the new version.
+2. Delete the old Scorekeeper Home Screen icon.
+3. In Safari, open the normal Scorekeeper website.
+4. Use Share > Add to Home Screen.
+5. The newly installed Home Screen app will use home-v3.html as its start URL.
+6. It redirects to the current index.html, so it will show the new navigation and refresh button.
+
+Do not add the old shortcut again. This time the installed app's start URL is different.

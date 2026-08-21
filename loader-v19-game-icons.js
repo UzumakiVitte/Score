@@ -1,6 +1,6 @@
 (function(){
   const s = document.createElement("script");
-  s.src = "loader-v17-delete-history.js?19";
+  s.src = "loader-v17-delete-history.js?20";
 
   s.onload = function(){
     const wait = () => {
@@ -95,7 +95,7 @@
       }
 
       const style = document.createElement("style");
-      style.id = "scorekeeper-game-icons-v19";
+      style.id = "scorekeeper-game-icons-v20";
       style.textContent = `
         .game-icon,
         .preset-icon {
@@ -109,6 +109,24 @@
           display: flex !important;
           align-items: center !important;
           justify-content: center !important;
+          flex-shrink: 0 !important;
+        }
+
+        /* The original card uses a 46px first grid column.
+           The icons are 64px, which caused the game names to overlap them.
+           Match the grid column to the actual icon size. */
+        .preset-card {
+          grid-template-columns: 64px minmax(0, 1fr) auto !important;
+          gap: 16px !important;
+        }
+
+        .preset-card > span:nth-child(2) {
+          min-width: 0 !important;
+        }
+
+        .preset-card b,
+        .preset-card small {
+          overflow-wrap: anywhere;
         }
 
         .scorekeeper-game-icon {
@@ -125,7 +143,10 @@
         }
       `;
 
-      const oldStyle = document.getElementById("scorekeeper-game-icons-v19");
+      const oldStyle =
+        document.getElementById("scorekeeper-game-icons-v19") ||
+        document.getElementById("scorekeeper-game-icons-v20");
+
       if (!oldStyle) document.head.appendChild(style);
 
       const originalRender = render;
@@ -160,7 +181,7 @@
 
       patchGameIcons();
 
-      window.__scorekeeperVersion = "v19-icons";
+      window.__scorekeeperVersion = "v20-icons";
     };
 
     wait();

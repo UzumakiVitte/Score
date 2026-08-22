@@ -1,41 +1,44 @@
 /*
- Scorekeeper V29 UI fixes
- 1. UnderCut default lowest-player deduction becomes 5.
- 2. Align player checkboxes in game creation.
- 3. Remove "Or use your own picture" label while keeping the upload button.
- This is additive and does not change game scoring logic.
+ Scorekeeper V30 UI fix
+ Safe additive patch for the existing V29 build.
+
+ Fixes:
+ 1. Player selection rows: player name on the left, checkbox on the right.
+ 2. Keeps all player rows aligned and evenly spaced.
+ 3. Removes "Or use your own picture" text from Add/Edit Player.
+ 4. Makes the UnderCut default lowest-player deduction 5.
+ 5. Does not change any game scoring rules.
 */
 (function(){
   "use strict";
 
-  const MIGRATION_KEY = "scorekeeper_undercut_default_v29";
+  const SETTINGS_MIGRATION = "scorekeeper_undercut_default_v30";
 
-  function setUnderCutDefault(){
+  function fixUndercutDefault(){
     try{
       if(typeof state === "undefined") return;
 
-      // Migrate the old default of 10 to the new default of 5 once.
-      // After migration, user changes are respected.
-      if(localStorage.getItem(MIGRATION_KEY) !== "1"){
+      if(localStorage.getItem(SETTINGS_MIGRATION) !== "1"){
         let saved = {};
         try{
           saved = JSON.parse(localStorage.getItem("score_undercut_settings") || "{}");
         }catch(_){ saved = {}; }
 
+        /*
+         The previous app default was 10. Convert that old default to 5 once.
+         If the user already had another value saved, leave it alone.
+        */
         if(!Object.prototype.hasOwnProperty.call(saved, "undercutPenalty") ||
            Number(saved.undercutPenalty) === 10){
           saved.undercutPenalty = 5;
-          if(!Object.prototype.hasOwnProperty.call(saved, "undercutAward")) saved.undercutAward = 60;
-          if(!Object.prototype.hasOwnProperty.call(saved, "roundWinnerPenalty")) saved.roundWinnerPenalty = 10;
           localStorage.setItem("score_undercut_settings", JSON.stringify(saved));
+          state.undercutSettings = {
+            ...(state.undercutSettings || {}),
+            undercutPenalty: 5
+          };
         }
 
-        state.undercutSettings = {
-          ...(state.undercutSettings || {}),
-          undercutPenalty: 5
-        };
-
-        localStorage.setItem(MIGRATION_KEY, "1");
+        localStorage.setItem(SETTINGS_MIGRATION, "1");
 
         if(state.tab === "settings" && typeof render === "function"){
           setTimeout(()=>render(), 0);
@@ -44,41 +47,105 @@
     }catch(_){}
   }
 
-  function alignGamePlayerChoices(root){
+  function fixPlayerSelection(root){
     const host = root || document;
-    host.querySelectorAll(".choice-row").forEach(row=>{
-      const input = row.querySelector('input[type="checkbox"]');
-      if(!input) return;
 
+    host.querySelectorAll("#playerChoices .choice-row, #customPlayerChoices .choice-row, .choice-list .choice-row").forEach(row=>{
       const inner = row.querySelector(":scope > .row");
-      if(inner){
-        inner.style.display = "flex";
-        inner.style.width = "100%";
+
+      /*
+       Current app structure:
+       label.choice-row
+         span.row
+           input[type=checkbox]
+           player name text
+
+       Use CSS grid so the anonymous player-name text occupies column 1
+       and the checkbox occupies column 2.
+      */
+      if(inner && inner.querySelector('input[type="checkbox"]')){
+        const input = inner.querySelector('input[type="checkbox"]');
+
+        inner.style.display = "grid";
+        inner.style.gridTemplateColumns = "minmax(0, 1fr) 26px";
         inner.style.alignItems = "center";
-        inner.style.justifyContent = "flex-start";
-        inner.style.gap = "12px";
+        inner.style.width = "100%";
+        inner.style.minWidth = "0";
+        inner.style.gap = "14px";
+        inner.style.justifyContent = "initial";
+
+        input.style.gridColumn = "2";
+        input.style.gridRow = "1";
+        input.style.width = "24px";
+        input.style.height = "24px";
+        input.style.minWidth = "24px";
+        input.style.margin = "0";
+        input.style.justifySelf = "end";
+        input.style.accentColor = "var(--accent)";
+        input.style.flex = "none";
+
+        row.style.display = "block";
+        row.style.width = "100%";
+        row.style.minHeight = "78px";
+        row.style.boxSizing = "border-box";
+        row.style.padding = "18px 20px";
       }
 
-      row.style.display = "flex";
-      row.style.width = "100%";
-      row.style.alignItems = "center";
-      row.style.justifyContent = "space-between";
-      row.style.gap = "12px";
-      row.style.minHeight = "64px";
-      row.style.boxSizing = "border-box";
+      /*
+       Older/custom editor structure with direct children.
+       Keep the name left and checkbox right if encountered.
+      */
+      const directInput = row.matches("label") ? row.querySelector(':scope > input[type="checkbox"]') : null;
+      if(directInput){
+        const name = row.querySelector(":scope > b");
+        const avatar = row.querySelector(":scope > span");
 
-      input.style.marginLeft = "auto";
-      input.style.flex = "0 0 auto";
-      input.style.width = "22px";
-      input.style.height = "22px";
-      input.style.accentColor = "var(--accent)";
+        row.style.display = "grid";
+        row.style.gridTemplateColumns = "minmax(0, 1fr) 26px";
+        row.style.alignItems = "center";
+        row.style.columnGap = "14px";
+        row.style.width = "100%";
+        row.style.minHeight = "78px";
+        row.style.padding = "18px 20px";
+        row.style.boxSizing = "border-box";
+
+        if(name){
+          name.style.gridColumn = "1";
+          name.style.gridRow = "1";
+          name.style.minWidth = "0";
+        }
+        if(avatar){
+          avatar.style.gridColumn = "1";
+          avatar.style.gridRow = "1";
+        }
+
+        directInput.style.gridColumn = "2";
+        directInput.style.gridRow = "1";
+        directInput.style.width = "24px";
+        directInput.style.height = "24px";
+        directInput.style.margin = "0";
+        directInput.style.justifySelf = "end";
+        directInput.style.accentColor = "var(--accent)";
+      }
     });
   }
 
   function removeOwnPictureLabel(root){
     const host = root || document;
+
     [...host.querySelectorAll(".avatar-section-title")].forEach(el=>{
-      const text = (el.textContent || "").trim().toLowerCase();
+      const text = (el.textContent || "").replace(/\s+/g," ").trim().toLowerCase();
+      if(text === "or use your own picture"){
+        el.remove();
+      }
+    });
+
+    /*
+     Fallback for versions where the section title class differs.
+    */
+    [...host.querySelectorAll("*")].forEach(el=>{
+      if(el.children.length !== 0) return;
+      const text = (el.textContent || "").replace(/\s+/g," ").trim().toLowerCase();
       if(text === "or use your own picture"){
         el.remove();
       }
@@ -86,37 +153,48 @@
   }
 
   function addStyles(){
-    if(document.getElementById("scorekeeper-v29-ui-fixes")) return;
+    if(document.getElementById("scorekeeper-v30-ui-fixes")) return;
 
     const style = document.createElement("style");
-    style.id = "scorekeeper-v29-ui-fixes";
+    style.id = "scorekeeper-v30-ui-fixes";
     style.textContent = `
-      .choice-row{
-        display:flex !important;
+      #playerChoices .choice-row,
+      #customPlayerChoices .choice-row,
+      .choice-list .choice-row{
         width:100% !important;
-        align-items:center !important;
-        justify-content:space-between !important;
-        gap:12px !important;
-        min-height:64px !important;
         box-sizing:border-box !important;
       }
 
-      .choice-row > .row{
-        display:flex !important;
-        width:100% !important;
+      #playerChoices .choice-row > .row,
+      #customPlayerChoices .choice-row > .row,
+      .choice-list .choice-row > .row{
+        display:grid !important;
+        grid-template-columns:minmax(0,1fr) 26px !important;
         align-items:center !important;
-        justify-content:flex-start !important;
-        gap:12px !important;
+        width:100% !important;
         min-width:0 !important;
+        gap:14px !important;
+        justify-content:initial !important;
       }
 
-      .choice-row input[type="checkbox"]{
-        width:22px !important;
-        height:22px !important;
-        min-width:22px !important;
-        flex:0 0 22px !important;
-        margin:0 2px 0 auto !important;
+      #playerChoices .choice-row > .row input[type="checkbox"],
+      #customPlayerChoices .choice-row > .row input[type="checkbox"],
+      .choice-list .choice-row > .row input[type="checkbox"]{
+        grid-column:2 !important;
+        grid-row:1 !important;
+        width:24px !important;
+        height:24px !important;
+        min-width:24px !important;
+        margin:0 !important;
+        justify-self:end !important;
         accent-color:var(--accent) !important;
+      }
+
+      #playerChoices .choice-row,
+      #customPlayerChoices .choice-row,
+      .choice-list .choice-row{
+        min-height:78px !important;
+        padding:18px 20px !important;
       }
 
       .avatar-section-title{
@@ -132,69 +210,71 @@
 
   function patch(){
     addStyles();
-    alignGamePlayerChoices(document);
+    fixPlayerSelection(document);
     removeOwnPictureLabel(document);
-    setUnderCutDefault();
+    fixUndercutDefault();
   }
 
-  function wrapPlayerEditor(){
-    if(typeof showPlayerEditor !== "function" || showPlayerEditor.__v29Wrapped) return;
+  function wrapFunction(name){
+    try{
+      if(typeof window[name] !== "function" || window[name]["__v30Wrapped"]) return;
 
-    const base = showPlayerEditor;
-    function wrapped(existing){
-      const result = base.apply(this, arguments);
-      setTimeout(()=>removeOwnPictureLabel(document), 0);
-      setTimeout(()=>removeOwnPictureLabel(document), 100);
-      return result;
-    }
-    wrapped.__v29Wrapped = true;
-    showPlayerEditor = wrapped;
-  }
+      const base = window[name];
 
-  function wrapRender(){
-    if(typeof render !== "function" || render.__v29Wrapped) return;
+      function wrapped(){
+        const result = base.apply(this, arguments);
 
-    const base = render;
-    function wrapped(){
-      const result = base.apply(this, arguments);
-      setTimeout(patch, 0);
-      setTimeout(patch, 100);
-      return result;
-    }
-    wrapped.__v29Wrapped = true;
-    render = wrapped;
+        setTimeout(patch, 0);
+        setTimeout(patch, 80);
+        setTimeout(patch, 250);
+
+        return result;
+      }
+
+      wrapped.__v30Wrapped = true;
+      window[name] = wrapped;
+    }catch(_){}
   }
 
   function boot(){
     addStyles();
-    wrapPlayerEditor();
-    wrapRender();
+
+    wrapFunction("render");
+    wrapFunction("newGame");
+    wrapFunction("customNewGame");
+    wrapFunction("showPlayerEditor");
+
     patch();
 
     const modal = document.getElementById("modalRoot");
-    if(modal && !modal.__v29Observer){
-      const observer = new MutationObserver(()=>patch());
-      observer.observe(modal, {childList:true, subtree:true});
-      modal.__v29Observer = true;
+    if(modal && !modal.__scorekeeperV30Observer){
+      const observer = new MutationObserver(()=>{
+        fixPlayerSelection(modal);
+        removeOwnPictureLabel(modal);
+      });
+      observer.observe(modal,{childList:true,subtree:true});
+      modal.__scorekeeperV30Observer = true;
     }
   }
 
-  const wait = ()=>{
+  function waitForApp(){
     if(typeof state === "undefined" || typeof render !== "function"){
-      setTimeout(wait, 80);
+      setTimeout(waitForApp,80);
       return;
     }
-    boot();
-  };
 
-  if(document.readyState === "loading"){
-    document.addEventListener("DOMContentLoaded", wait);
-  }else{
-    wait();
+    boot();
   }
 
-  setTimeout(boot, 500);
-  setTimeout(boot, 1500);
+  if(document.readyState === "loading"){
+    document.addEventListener("DOMContentLoaded",waitForApp);
+  }else{
+    waitForApp();
+  }
 
-  window.__scorekeeperVersion = "v29-ui-fixes";
+  setTimeout(boot,500);
+  setTimeout(boot,1500);
+  setTimeout(boot,3000);
+
+  window.__scorekeeperVersion = "v30-player-selection-fix";
 })();
